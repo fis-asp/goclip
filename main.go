@@ -803,7 +803,7 @@ func main() {
 
 			err := sendText(txt, layoutSelect.Selected, 7*time.Millisecond)
 
-			fyne.CurrentApp().RunOnMain(func() {
+			fyne.CurrentApp().Driver().RunOnMain(func() {
 				if err != nil {
 					status.SetText("Error typing: " + err.Error())
 					return
@@ -857,7 +857,7 @@ func main() {
 
 			err := sendText(txt, layoutSelect.Selected, 7*time.Millisecond)
 
-			fyne.CurrentApp().RunOnMain(func() {
+			fyne.CurrentApp().Driver().RunOnMain(func() {
 				if err != nil {
 					status.SetText("Error typing clipboard: " + err.Error())
 					return
