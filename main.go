@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 	"unsafe"
+	// #include <windows.h>
+	"C"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -95,6 +97,89 @@ type input struct {
 	_pad1 uint32
 	Ki    keyboardInput
 	_pad2 uint64
+}
+
+// ------------------------- ForegroundWatcher.go -------------------------
+//
+// Foreground window watcher using Windows SetWinEventHook API.
+// Replaces polling loop with an event-driven system.
+//
+// Monitors EVENT_SYSTEM_FOREGROUND and calls the user-provided callback
+// whenever the active/focused window changes.
+//
+
+var (
+    procSetWinEventHook = user32.NewProc("SetWinEventHook")
+    procUnhookWinEvent  = user32.NewProc("UnhookWinEvent")
+
+    // handle to the installed hook, needed for cleanup
+    foregroundEventHook windows.Handle
+
+    // prevent GC of the callback by holding reference globally
+    foregroundCallbackRef uintptr
+)
+
+const (
+    eventSystemForeground = 0x0003
+    winEventOutOfContext  = 0x0000
+)
+
+// startForegroundWatcher sets up a WinEventHook for EVENT_SYSTEM_FOREGROUND.
+// It accepts the executable name of this process (lower-cased, to skip self),
+// and a callback function to notify when the foreground window changes.
+func startForegroundWatcher(
+    selfExeLower string,
+    onChange func(hwnd windows.Handle, title string),
+) error {
+    // Wrap the callback in a syscall callback
+    cb := windows.NewCallback(func(
+        hWinEventHook uintptr,
+        event uint32,
+        hwnd uintptr,
+        idObject, idChild, idThread, dwmsEventTime uintptr,
+    ) uintptr {
+        if hwnd == 0 {
+            return 0
+        }
+
+        h := windows.Handle(hwnd)
+        title := strings.TrimSpace(getWindowText(h))
+
+        // Call client callback only if meaningful
+        if title != "" && !shouldIgnoreWindow(h, title, selfExeLower) {
+            onChange(h, title)
+        }
+        return 0
+    })
+
+    // GC safekeeping
+    foregroundCallbackRef = cb
+
+    // Install the Windows hook
+    r, _, err := procSetWinEventHook.Call(
+        uintptr(eventSystemForeground), // eventMin
+        uintptr(eventSystemForeground), // eventMax
+        0,                              // hModule (not using DLL injection)
+        cb,                             // callback
+        0,                              // processId
+        0,                              // threadId
+        uintptr(winEventOutOfContext),  // flags -> don't inject into processes
+    )
+    if r == 0 {
+        return fmt.Errorf("SetWinEventHook failed: %v", err)
+    }
+    foregroundEventHook = windows.Handle(r)
+    return nil
+}
+
+// stopForegroundWatcher removes the foreground watcher hook.
+// Should be called at program exit.
+func stopForegroundWatcher() {
+    if foregroundEventHook != 0 {
+        procUnhookWinEvent.Call(uintptr(foregroundEventHook))
+        foregroundEventHook = 0
+    }
+    foregroundCallbackRef = 0
 }
 
 func isWindowVisible(hwnd windows.Handle) bool {
@@ -608,23 +693,23 @@ func main() {
 
 	refreshBtn := widget.NewButton("Refresh windows", refreshWindows)
 
-	go func() {
-		for {
-			hwnd := getForeground()
-			if hwnd != 0 {
-				title := strings.TrimSpace(getWindowText(hwnd))
-				if title != "" && title != w.Title() && !shouldIgnoreWindow(hwnd, title, selfExeLower) {
-					t := truncateRunes(title, 30)
-					laMu.Lock()
-					lastActiveHandle = hwnd
-					lastActiveTitle = t
-					laMu.Unlock()
-					_ = lastActiveText.Set("Last active: " + t)
-				}
-			}
-			time.Sleep(300 * time.Millisecond)
-		}
-	}()
+	// Start event-driven watcher of foreground windows
+	err := startForegroundWatcher(selfExeLower, func(hwnd windows.Handle, title string) {
+		t := truncateRunes(title, 30)
+
+		laMu.Lock()
+		lastActiveHandle = hwnd
+		lastActiveTitle = t
+		laMu.Unlock()
+
+		_ = lastActiveText.Set("Last active: " + t)
+	})
+	if err != nil {
+		status.SetText("⚠️ Foreground watcher failed → falling back: " + err.Error())
+	}
+
+	// Ensure cleanup when main exits
+	defer stopForegroundWatcher()
 
 	typeBtn := widget.NewButton("Type", func() {
 		selected := windowSelect.Selected
