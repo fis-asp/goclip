@@ -802,8 +802,8 @@ func main() {
 
 			err := sendText(txt, layoutSelect.Selected, 7*time.Millisecond)
 
-			// Always update UI on main thread
-			fyne.CurrentApp().Driver().RunOnMain(func() {
+			// Always update UI safely on the main thread
+			w.Canvas().Invoke(func() {
 				if err != nil {
 					status.SetText("Error typing: " + err.Error())
 					return
@@ -856,12 +856,11 @@ func main() {
 
 			err := sendText(txt, layoutSelect.Selected, 7*time.Millisecond)
 
-			fyne.CurrentApp().Driver().RunOnMain(func() {
+			w.Canvas().Invoke(func() {
 				if err != nil {
 					status.SetText("Error typing clipboard: " + err.Error())
 					return
 				}
-
 				title := strings.TrimSpace(getWindowText(hwnd))
 				if title == "" {
 					title = curTitle
@@ -870,7 +869,6 @@ func main() {
 				status.SetText("Typed clipboard to: " + title)
 			})
 		}(hwnd, txt, curTitle)
-	
 	})
 
 	// Left side: window selector + buttons
