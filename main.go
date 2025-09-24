@@ -789,26 +789,33 @@ func main() {
 			return
 		}
 
-		setForegroundWindow(hwnd)
-		time.Sleep(150 * time.Millisecond)
-
 		txt := inputEntry.Text
 		if txt == "" {
 			status.SetText("Nothing to type.")
 			return
 		}
 
-		if err := sendText(txt, layoutSelect.Selected, 7*time.Millisecond); err != nil {
-			status.SetText("Error typing: " + err.Error())
-			return
-		}
+		// Run typing in a goroutine to avoid blocking the UI
+		go func(hwnd windows.Handle, txt string, curTitle string) {
+			setForegroundWindow(hwnd)
+			time.Sleep(150 * time.Millisecond)
 
-		title := strings.TrimSpace(getWindowText(hwnd))
-		if title == "" {
-			title = curTitle
-		}
-		title = truncateRunes(title, 30)
-		status.SetText("Typed to: " + title)
+			err := sendText(txt, layoutSelect.Selected, 7*time.Millisecond)
+
+			// Always update UI on main thread
+			fyne.CurrentApp().Driver().RunOnMain(func() {
+				if err != nil {
+					status.SetText("Error typing: " + err.Error())
+					return
+				}
+				title := strings.TrimSpace(getWindowText(hwnd))
+				if title == "" {
+					title = curTitle
+				}
+				title = truncateRunes(title, 30)
+				status.SetText("Typed to: " + title)
+			})
+		}(hwnd, txt, curTitle))
 	})
 
 	typeClipboardBtn := widget.NewButton("Type Clipboard", func() {
@@ -836,26 +843,33 @@ func main() {
 			return
 		}
 
-		setForegroundWindow(hwnd)
-		time.Sleep(150 * time.Millisecond)
-
 		txt := w.Clipboard().Content()
 		if txt == "" {
 			status.SetText("Clipboard is empty.")
 			return
 		}
 
-		if err := sendText(txt, layoutSelect.Selected, 7*time.Millisecond); err != nil {
-			status.SetText("Error typing clipboard: " + err.Error())
-			return
-		}
+		// Run in goroutine to avoid blocking UI
+		go func(hwnd windows.Handle, txt string, curTitle string) {
+			setForegroundWindow(hwnd)
+			time.Sleep(150 * time.Millisecond)
 
-		title := strings.TrimSpace(getWindowText(hwnd))
-		if title == "" {
-			title = curTitle
-		}
-		title = truncateRunes(title, 30)
-		status.SetText("Typed clipboard to: " + title)
+			err := sendText(txt, layoutSelect.Selected, 7*time.Millisecond)
+
+			fyne.CurrentApp().Driver().RunOnMain(func() {
+				if err != nil {
+					status.SetText("Error typing clipboard: " + err.Error())
+					return
+				}
+
+				title := strings.TrimSpace(getWindowText(hwnd))
+				if title == "" {
+					title = curTitle
+				}
+				title = truncateRunes(title, 30)
+				status.SetText("Typed clipboard to: " + title)
+			})
+		}(hwnd, txt, curTitle))
 	})
 
 	// Left side: window selector + buttons
