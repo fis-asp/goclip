@@ -790,32 +790,26 @@ func main() {
 			return
 		}
 
+		setForegroundWindow(hwnd)
+		time.Sleep(150 * time.Millisecond)
+
 		txt := inputEntry.Text
 		if txt == "" {
 			status.SetText("Nothing to type.")
 			return
 		}
 
-		// Run typing asynchronously in goroutine
-		go func(hwnd windows.Handle, txt string, curTitle string) {
-			setForegroundWindow(hwnd)
-			time.Sleep(150 * time.Millisecond)
+		if err := sendText(txt, layoutSelect.Selected, 7*time.Millisecond); err != nil {
+			status.SetText("Error typing: " + err.Error())
+			return
+		}
 
-			err := sendText(txt, layoutSelect.Selected, 7*time.Millisecond)
-
-		w.Canvas().Invoke(func() {
-			if err != nil {
-				status.SetText("Error typing: " + err.Error())
-				return
-			}
-			title := strings.TrimSpace(getWindowText(hwnd))
-			if title == "" {
-				title = curTitle
-			}
-			title = truncateRunes(title, 30)
-			status.SetText("Typed to: " + title)
-		})
-		}(hwnd, txt, curTitle)
+		title := strings.TrimSpace(getWindowText(hwnd))
+		if title == "" {
+			title = curTitle
+		}
+		title = truncateRunes(title, 30)
+		status.SetText("Typed to: " + title)
 	})
 
 	// --- Type Clipboard Button ---
@@ -844,32 +838,26 @@ func main() {
 			return
 		}
 
+		setForegroundWindow(hwnd)
+		time.Sleep(150 * time.Millisecond)
+
 		txt := w.Clipboard().Content()
 		if txt == "" {
 			status.SetText("Clipboard is empty.")
 			return
 		}
 
-		// Run typing asynchronously in goroutine
-		go func(hwnd windows.Handle, txt string, curTitle string) {
-			setForegroundWindow(hwnd)
-			time.Sleep(150 * time.Millisecond)
+		if err := sendText(txt, layoutSelect.Selected, 7*time.Millisecond); err != nil {
+			status.SetText("Error typing clipboard: " + err.Error())
+			return
+		}
 
-			err := sendText(txt, layoutSelect.Selected, 7*time.Millisecond)
-
-		w.Canvas().Invoke(func() {
-			if err != nil {
-				status.SetText("Error typing: " + err.Error())
-				return
-			}
-			title := strings.TrimSpace(getWindowText(hwnd))
-			if title == "" {
-				title = curTitle
-			}
-			title = truncateRunes(title, 30)
-			status.SetText("Typed to: " + title)
-		})
-		}(hwnd, txt, curTitle)
+		title := strings.TrimSpace(getWindowText(hwnd))
+		if title == "" {
+			title = curTitle
+		}
+		title = truncateRunes(title, 30)
+		status.SetText("Typed clipboard to: " + title)
 	})
 
 	// Left side: window selector + buttons
