@@ -803,18 +803,18 @@ func main() {
 
 			err := sendText(txt, layoutSelect.Selected, 7*time.Millisecond)
 
-			fyne.CurrentApp().Driver().RunOnMain(func() {
-				if err != nil {
-					status.SetText("Error typing: " + err.Error())
-					return
-				}
-				title := strings.TrimSpace(getWindowText(hwnd))
-				if title == "" {
-					title = curTitle
-				}
-				title = truncateRunes(title, 30)
-				status.SetText("Typed to: " + title)
-			})
+		w.Canvas().Invoke(func() {
+			if err != nil {
+				status.SetText("Error typing: " + err.Error())
+				return
+			}
+			title := strings.TrimSpace(getWindowText(hwnd))
+			if title == "" {
+				title = curTitle
+			}
+			title = truncateRunes(title, 30)
+			status.SetText("Typed to: " + title)
+		})
 		}(hwnd, txt, curTitle)
 	})
 
@@ -857,19 +857,18 @@ func main() {
 
 			err := sendText(txt, layoutSelect.Selected, 7*time.Millisecond)
 
-			fyne.CurrentApp().Driver().RunOnMain(func() {
-				if err != nil {
-					status.SetText("Error typing clipboard: " + err.Error())
-					return
-				}
-
-				title := strings.TrimSpace(getWindowText(hwnd))
-				if title == "" {
-					title = curTitle
-				}
-				title = truncateRunes(title, 30)
-				status.SetText("Typed clipboard to: " + title)
-			})
+		w.Canvas().Invoke(func() {
+			if err != nil {
+				status.SetText("Error typing: " + err.Error())
+				return
+			}
+			title := strings.TrimSpace(getWindowText(hwnd))
+			if title == "" {
+				title = curTitle
+			}
+			title = truncateRunes(title, 30)
+			status.SetText("Typed to: " + title)
+		})
 		}(hwnd, txt, curTitle)
 	})
 
