@@ -43,6 +43,14 @@ var windowTextBufPool = sync.Pool{
 	},
 }
 
+// Pool of UTF-16 buffers for QueryFullProcessImageNameW
+var exePathBufPool = sync.Pool{
+	New: func() any {
+		buf := make([]uint16, 1024) // ~2KB default, enough for most paths
+		return &buf
+	},
+}
+
 var (
 	user32   = windows.NewLazySystemDLL("user32.dll")
 	kernel32 = windows.NewLazySystemDLL("kernel32.dll")
@@ -240,28 +248,38 @@ func getWindowProcessExeBase(hwnd windows.Handle) string {
 	if pid == 0 {
 		return ""
 	}
-	// Open with minimal rights for querying path
+
+	// Open process with minimal rights
 	h, err := windows.OpenProcess(processQueryLimitedInformation, false, pid)
 	if err != nil {
 		return ""
 	}
 	defer windows.CloseHandle(h)
 
-	// QueryFullProcessImageNameW
-	// Buffer length in characters (UTF-16), try a reasonable size
-	buf := make([]uint16, 1024)
+	// Get buffer from pool
+	p := exePathBufPool.Get().(*[]uint16)
+	buf := *p
 	size := uint32(len(buf))
+
+	// Query the full process path
 	r1, _, _ := procQueryFullProcessImageNameW.Call(
 		uintptr(h),
 		uintptr(0),
 		uintptr(unsafe.Pointer(&buf[0])),
 		uintptr(unsafe.Pointer(&size)),
 	)
-	if r1 == 0 || size == 0 {
-		return ""
+
+	var exe string
+	if r1 != 0 && size > 0 {
+		exe = strings.ToLower(filepath.Base(windows.UTF16ToString(buf[:size])))
 	}
-	full := windows.UTF16ToString(buf[:size])
-	return strings.ToLower(filepath.Base(full))
+
+	// Put back if not grown too large
+	if cap(buf) <= 8192 { // e.g. ~16KB characters ~32KB memory
+		exePathBufPool.Put(&buf)
+	}
+
+	return exe
 }
 
 func shouldIgnoreWindow(hwnd windows.Handle, title string, selfExeLower string) bool {
