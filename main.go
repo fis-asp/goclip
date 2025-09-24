@@ -815,7 +815,7 @@ func main() {
 				title = truncateRunes(title, 30)
 				status.SetText("Typed to: " + title)
 			})
-		}(hwnd, txt, curTitle))
+		}(hwnd, txt, curTitle)
 	})
 
 	typeClipboardBtn := widget.NewButton("Type Clipboard", func() {
@@ -869,7 +869,8 @@ func main() {
 				title = truncateRunes(title, 30)
 				status.SetText("Typed clipboard to: " + title)
 			})
-		}(hwnd, txt, curTitle))
+		}(hwnd, txt, curTitle)
+	
 	})
 
 	// Left side: window selector + buttons
