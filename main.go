@@ -764,6 +764,7 @@ func main() {
 	// Ensure cleanup when main exits
 	defer stopForegroundWatcher()
 
+	// --- Type Button ---
 	typeBtn := widget.NewButton("Type", func() {
 		selected := windowSelect.Selected
 
@@ -795,15 +796,14 @@ func main() {
 			return
 		}
 
-		// Run typing in a goroutine to avoid blocking the UI
+		// Run typing asynchronously in goroutine
 		go func(hwnd windows.Handle, txt string, curTitle string) {
 			setForegroundWindow(hwnd)
 			time.Sleep(150 * time.Millisecond)
 
 			err := sendText(txt, layoutSelect.Selected, 7*time.Millisecond)
 
-			// Always update UI safely on the main thread
-			w.Canvas().Invoke(func() {
+			fyne.CurrentApp().RunOnMain(func() {
 				if err != nil {
 					status.SetText("Error typing: " + err.Error())
 					return
@@ -818,6 +818,7 @@ func main() {
 		}(hwnd, txt, curTitle)
 	})
 
+	// --- Type Clipboard Button ---
 	typeClipboardBtn := widget.NewButton("Type Clipboard", func() {
 		selected := windowSelect.Selected
 
@@ -849,18 +850,19 @@ func main() {
 			return
 		}
 
-		// Run in goroutine to avoid blocking UI
+		// Run typing asynchronously in goroutine
 		go func(hwnd windows.Handle, txt string, curTitle string) {
 			setForegroundWindow(hwnd)
 			time.Sleep(150 * time.Millisecond)
 
 			err := sendText(txt, layoutSelect.Selected, 7*time.Millisecond)
 
-			w.Canvas().Invoke(func() {
+			fyne.CurrentApp().RunOnMain(func() {
 				if err != nil {
 					status.SetText("Error typing clipboard: " + err.Error())
 					return
 				}
+
 				title := strings.TrimSpace(getWindowText(hwnd))
 				if title == "" {
 					title = curTitle
