@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 	"unsafe"
+
 	// #include <windows.h>
 	"C"
 
@@ -31,6 +32,15 @@ var embeddedAppIco []byte
 type windowInfo struct {
 	Hwnd  windows.Handle
 	Title string
+}
+
+// Pool of UTF-16 buffers for GetWindowText
+var windowTextBufPool = sync.Pool{
+	New: func() any {
+		// Most window titles are well under 256 runes, so 512 UTF-16 chars suffices
+		buf := make([]uint16, 512)
+		return &buf
+	},
 }
 
 var (
@@ -109,77 +119,77 @@ type input struct {
 //
 
 var (
-    procSetWinEventHook = user32.NewProc("SetWinEventHook")
-    procUnhookWinEvent  = user32.NewProc("UnhookWinEvent")
+	procSetWinEventHook = user32.NewProc("SetWinEventHook")
+	procUnhookWinEvent  = user32.NewProc("UnhookWinEvent")
 
-    // handle to the installed hook, needed for cleanup
-    foregroundEventHook windows.Handle
+	// handle to the installed hook, needed for cleanup
+	foregroundEventHook windows.Handle
 
-    // prevent GC of the callback by holding reference globally
-    foregroundCallbackRef uintptr
+	// prevent GC of the callback by holding reference globally
+	foregroundCallbackRef uintptr
 )
 
 const (
-    eventSystemForeground = 0x0003
-    winEventOutOfContext  = 0x0000
+	eventSystemForeground = 0x0003
+	winEventOutOfContext  = 0x0000
 )
 
 // startForegroundWatcher sets up a WinEventHook for EVENT_SYSTEM_FOREGROUND.
 // It accepts the executable name of this process (lower-cased, to skip self),
 // and a callback function to notify when the foreground window changes.
 func startForegroundWatcher(
-    selfExeLower string,
-    onChange func(hwnd windows.Handle, title string),
+	selfExeLower string,
+	onChange func(hwnd windows.Handle, title string),
 ) error {
-    // Wrap the callback in a syscall callback
-    cb := windows.NewCallback(func(
-        hWinEventHook uintptr,
-        event uint32,
-        hwnd uintptr,
-        idObject, idChild, idThread, dwmsEventTime uintptr,
-    ) uintptr {
-        if hwnd == 0 {
-            return 0
-        }
+	// Wrap the callback in a syscall callback
+	cb := windows.NewCallback(func(
+		hWinEventHook uintptr,
+		event uint32,
+		hwnd uintptr,
+		idObject, idChild, idThread, dwmsEventTime uintptr,
+	) uintptr {
+		if hwnd == 0 {
+			return 0
+		}
 
-        h := windows.Handle(hwnd)
-        title := strings.TrimSpace(getWindowText(h))
+		h := windows.Handle(hwnd)
+		title := strings.TrimSpace(getWindowText(h))
 
-        // Call client callback only if meaningful
-        if title != "" && !shouldIgnoreWindow(h, title, selfExeLower) {
-            onChange(h, title)
-        }
-        return 0
-    })
+		// Call client callback only if meaningful
+		if title != "" && !shouldIgnoreWindow(h, title, selfExeLower) {
+			onChange(h, title)
+		}
+		return 0
+	})
 
-    // GC safekeeping
-    foregroundCallbackRef = cb
+	// GC safekeeping
+	foregroundCallbackRef = cb
 
-    // Install the Windows hook
-    r, _, err := procSetWinEventHook.Call(
-        uintptr(eventSystemForeground), // eventMin
-        uintptr(eventSystemForeground), // eventMax
-        0,                              // hModule (not using DLL injection)
-        cb,                             // callback
-        0,                              // processId
-        0,                              // threadId
-        uintptr(winEventOutOfContext),  // flags -> don't inject into processes
-    )
-    if r == 0 {
-        return fmt.Errorf("SetWinEventHook failed: %v", err)
-    }
-    foregroundEventHook = windows.Handle(r)
-    return nil
+	// Install the Windows hook
+	r, _, err := procSetWinEventHook.Call(
+		uintptr(eventSystemForeground), // eventMin
+		uintptr(eventSystemForeground), // eventMax
+		0,                              // hModule (not using DLL injection)
+		cb,                             // callback
+		0,                              // processId
+		0,                              // threadId
+		uintptr(winEventOutOfContext),  // flags -> don't inject into processes
+	)
+	if r == 0 {
+		return fmt.Errorf("SetWinEventHook failed: %v", err)
+	}
+	foregroundEventHook = windows.Handle(r)
+	return nil
 }
 
 // stopForegroundWatcher removes the foreground watcher hook.
 // Should be called at program exit.
 func stopForegroundWatcher() {
-    if foregroundEventHook != 0 {
-        procUnhookWinEvent.Call(uintptr(foregroundEventHook))
-        foregroundEventHook = 0
-    }
-    foregroundCallbackRef = 0
+	if foregroundEventHook != 0 {
+		procUnhookWinEvent.Call(uintptr(foregroundEventHook))
+		foregroundEventHook = 0
+	}
+	foregroundCallbackRef = 0
 }
 
 func isWindowVisible(hwnd windows.Handle) bool {
@@ -193,9 +203,34 @@ func getWindowText(hwnd windows.Handle) string {
 	if length == 0 {
 		return ""
 	}
-	buf := make([]uint16, length+1)
-	procGetWindowTextW.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&buf[0])), uintptr(length+1))
-	return windows.UTF16ToString(buf)
+
+	// get buffer from pool
+	p := windowTextBufPool.Get().(*[]uint16)
+	buf := *p
+
+	// if too small, grow (don’t return shrunk buffer to pool)
+	if cap(buf) < length+1 {
+		buf = make([]uint16, length+1)
+	} else {
+		buf = buf[:length+1]
+	}
+
+	// call GetWindowTextW
+	procGetWindowTextW.Call(
+		uintptr(hwnd),
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(length+1),
+	)
+
+	// convert to string
+	text := windows.UTF16ToString(buf[:length])
+
+	// put buffer back if it's a reasonable size
+	if cap(buf) <= 4096 {
+		windowTextBufPool.Put(&buf)
+	}
+
+	return text
 }
 
 func getWindowProcessExeBase(hwnd windows.Handle) string {
