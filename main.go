@@ -59,7 +59,6 @@ var (
 	procIsWindowVisible          = user32.NewProc("IsWindowVisible")
 	procGetWindowTextW           = user32.NewProc("GetWindowTextW")
 	procGetWindowTextLengthW     = user32.NewProc("GetWindowTextLengthW")
-	procGetForegroundWindow      = user32.NewProc("GetForegroundWindow")
 	procSetForegroundWindow      = user32.NewProc("SetForegroundWindow")
 	procSendInput                = user32.NewProc("SendInput")
 	procVkKeyScanExW             = user32.NewProc("VkKeyScanExW")
