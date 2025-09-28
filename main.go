@@ -325,11 +325,6 @@ func enumWindows(selfExeLower string) []windowInfo {
 	return wins
 }
 
-func getForeground() windows.Handle {
-	h, _, _ := procGetForegroundWindow.Call()
-	return windows.Handle(h)
-}
-
 func setForegroundWindow(hwnd windows.Handle) bool {
 	r, _, _ := procSetForegroundWindow.Call(uintptr(hwnd))
 	return r != 0
