@@ -12,6 +12,9 @@ import (
 	"time"
 	"unsafe"
 
+	// #include <windows.h>
+	"C"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
@@ -31,6 +34,23 @@ type windowInfo struct {
 	Title string
 }
 
+// Pool of UTF-16 buffers for GetWindowText
+var windowTextBufPool = sync.Pool{
+	New: func() any {
+		// Most window titles are well under 256 runes, so 512 UTF-16 chars suffices
+		buf := make([]uint16, 512)
+		return &buf
+	},
+}
+
+// Pool of UTF-16 buffers for QueryFullProcessImageNameW
+var exePathBufPool = sync.Pool{
+	New: func() any {
+		buf := make([]uint16, 1024) // ~2KB default, enough for most paths
+		return &buf
+	},
+}
+
 var (
 	user32   = windows.NewLazySystemDLL("user32.dll")
 	kernel32 = windows.NewLazySystemDLL("kernel32.dll")
@@ -39,7 +59,6 @@ var (
 	procIsWindowVisible          = user32.NewProc("IsWindowVisible")
 	procGetWindowTextW           = user32.NewProc("GetWindowTextW")
 	procGetWindowTextLengthW     = user32.NewProc("GetWindowTextLengthW")
-	procGetForegroundWindow      = user32.NewProc("GetForegroundWindow")
 	procSetForegroundWindow      = user32.NewProc("SetForegroundWindow")
 	procSendInput                = user32.NewProc("SendInput")
 	procVkKeyScanExW             = user32.NewProc("VkKeyScanExW")
@@ -97,6 +116,89 @@ type input struct {
 	_pad2 uint64
 }
 
+// ------------------------- ForegroundWatcher.go -------------------------
+//
+// Foreground window watcher using Windows SetWinEventHook API.
+// Replaces polling loop with an event-driven system.
+//
+// Monitors EVENT_SYSTEM_FOREGROUND and calls the user-provided callback
+// whenever the active/focused window changes.
+//
+
+var (
+	procSetWinEventHook = user32.NewProc("SetWinEventHook")
+	procUnhookWinEvent  = user32.NewProc("UnhookWinEvent")
+
+	// handle to the installed hook, needed for cleanup
+	foregroundEventHook windows.Handle
+
+	// prevent GC of the callback by holding reference globally
+	foregroundCallbackRef uintptr
+)
+
+const (
+	eventSystemForeground = 0x0003
+	winEventOutOfContext  = 0x0000
+)
+
+// startForegroundWatcher sets up a WinEventHook for EVENT_SYSTEM_FOREGROUND.
+// It accepts the executable name of this process (lower-cased, to skip self),
+// and a callback function to notify when the foreground window changes.
+func startForegroundWatcher(
+	selfExeLower string,
+	onChange func(hwnd windows.Handle, title string),
+) error {
+	// Wrap the callback in a syscall callback
+	cb := windows.NewCallback(func(
+		hWinEventHook uintptr,
+		event uint32,
+		hwnd uintptr,
+		idObject, idChild, idThread, dwmsEventTime uintptr,
+	) uintptr {
+		if hwnd == 0 {
+			return 0
+		}
+
+		h := windows.Handle(hwnd)
+		title := strings.TrimSpace(getWindowText(h))
+
+		// Call client callback only if meaningful
+		if title != "" && !shouldIgnoreWindow(h, title, selfExeLower) {
+			onChange(h, title)
+		}
+		return 0
+	})
+
+	// GC safekeeping
+	foregroundCallbackRef = cb
+
+	// Install the Windows hook
+	r, _, err := procSetWinEventHook.Call(
+		uintptr(eventSystemForeground), // eventMin
+		uintptr(eventSystemForeground), // eventMax
+		0,                              // hModule (not using DLL injection)
+		cb,                             // callback
+		0,                              // processId
+		0,                              // threadId
+		uintptr(winEventOutOfContext),  // flags -> don't inject into processes
+	)
+	if r == 0 {
+		return fmt.Errorf("SetWinEventHook failed: %v", err)
+	}
+	foregroundEventHook = windows.Handle(r)
+	return nil
+}
+
+// stopForegroundWatcher removes the foreground watcher hook.
+// Should be called at program exit.
+func stopForegroundWatcher() {
+	if foregroundEventHook != 0 {
+		procUnhookWinEvent.Call(uintptr(foregroundEventHook))
+		foregroundEventHook = 0
+	}
+	foregroundCallbackRef = 0
+}
+
 func isWindowVisible(hwnd windows.Handle) bool {
 	r, _, _ := procIsWindowVisible.Call(uintptr(hwnd))
 	return r != 0
@@ -108,9 +210,34 @@ func getWindowText(hwnd windows.Handle) string {
 	if length == 0 {
 		return ""
 	}
-	buf := make([]uint16, length+1)
-	procGetWindowTextW.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&buf[0])), uintptr(length+1))
-	return windows.UTF16ToString(buf)
+
+	// get buffer from pool
+	p := windowTextBufPool.Get().(*[]uint16)
+	buf := *p
+
+	// if too small, grow (don’t return shrunk buffer to pool)
+	if cap(buf) < length+1 {
+		buf = make([]uint16, length+1)
+	} else {
+		buf = buf[:length+1]
+	}
+
+	// call GetWindowTextW
+	procGetWindowTextW.Call(
+		uintptr(hwnd),
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(length+1),
+	)
+
+	// convert to string
+	text := windows.UTF16ToString(buf[:length])
+
+	// put buffer back if it's a reasonable size
+	if cap(buf) <= 4096 {
+		windowTextBufPool.Put(&buf)
+	}
+
+	return text
 }
 
 func getWindowProcessExeBase(hwnd windows.Handle) string {
@@ -120,28 +247,38 @@ func getWindowProcessExeBase(hwnd windows.Handle) string {
 	if pid == 0 {
 		return ""
 	}
-	// Open with minimal rights for querying path
+
+	// Open process with minimal rights
 	h, err := windows.OpenProcess(processQueryLimitedInformation, false, pid)
 	if err != nil {
 		return ""
 	}
 	defer windows.CloseHandle(h)
 
-	// QueryFullProcessImageNameW
-	// Buffer length in characters (UTF-16), try a reasonable size
-	buf := make([]uint16, 1024)
+	// Get buffer from pool
+	p := exePathBufPool.Get().(*[]uint16)
+	buf := *p
 	size := uint32(len(buf))
+
+	// Query the full process path
 	r1, _, _ := procQueryFullProcessImageNameW.Call(
 		uintptr(h),
 		uintptr(0),
 		uintptr(unsafe.Pointer(&buf[0])),
 		uintptr(unsafe.Pointer(&size)),
 	)
-	if r1 == 0 || size == 0 {
-		return ""
+
+	var exe string
+	if r1 != 0 && size > 0 {
+		exe = strings.ToLower(filepath.Base(windows.UTF16ToString(buf[:size])))
 	}
-	full := windows.UTF16ToString(buf[:size])
-	return strings.ToLower(filepath.Base(full))
+
+	// Put back if not grown too large
+	if cap(buf) <= 8192 { // e.g. ~16KB characters ~32KB memory
+		exePathBufPool.Put(&buf)
+	}
+
+	return exe
 }
 
 func shouldIgnoreWindow(hwnd windows.Handle, title string, selfExeLower string) bool {
@@ -185,11 +322,6 @@ func enumWindows(selfExeLower string) []windowInfo {
 		return strings.ToLower(wins[i].Title) < strings.ToLower(wins[j].Title)
 	})
 	return wins
-}
-
-func getForeground() windows.Handle {
-	h, _, _ := procGetForegroundWindow.Call()
-	return windows.Handle(h)
 }
 
 func setForegroundWindow(hwnd windows.Handle) bool {
@@ -608,24 +740,25 @@ func main() {
 
 	refreshBtn := widget.NewButton("Refresh windows", refreshWindows)
 
-	go func() {
-		for {
-			hwnd := getForeground()
-			if hwnd != 0 {
-				title := strings.TrimSpace(getWindowText(hwnd))
-				if title != "" && title != w.Title() && !shouldIgnoreWindow(hwnd, title, selfExeLower) {
-					t := truncateRunes(title, 30)
-					laMu.Lock()
-					lastActiveHandle = hwnd
-					lastActiveTitle = t
-					laMu.Unlock()
-					_ = lastActiveText.Set("Last active: " + t)
-				}
-			}
-			time.Sleep(300 * time.Millisecond)
-		}
-	}()
+	// Start event-driven watcher of foreground windows
+	err := startForegroundWatcher(selfExeLower, func(hwnd windows.Handle, title string) {
+		t := truncateRunes(title, 30)
 
+		laMu.Lock()
+		lastActiveHandle = hwnd
+		lastActiveTitle = t
+		laMu.Unlock()
+
+		_ = lastActiveText.Set("Last active: " + t)
+	})
+	if err != nil {
+		status.SetText("⚠️ Foreground watcher failed → falling back: " + err.Error())
+	}
+
+	// Ensure cleanup when main exits
+	defer stopForegroundWatcher()
+
+	// --- Type Button ---
 	typeBtn := widget.NewButton("Type", func() {
 		selected := windowSelect.Selected
 
@@ -673,6 +806,7 @@ func main() {
 		status.SetText("Typed to: " + title)
 	})
 
+	// --- Type Clipboard Button ---
 	typeClipboardBtn := widget.NewButton("Type Clipboard", func() {
 		selected := windowSelect.Selected
 
