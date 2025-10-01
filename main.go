@@ -716,13 +716,13 @@ func main() {
 
 	customMsEntry := widget.NewEntry()
 	customMsEntry.SetPlaceHolder("ms per char")
-	customMsEntry.Disable() // only enabled when Custom is selected
+	customMsEntry.Hide() // start hidden unless Custom is selected
 
 	speedSelect.OnChanged = func(s string) {
 		if s == "Custom" {
-			customMsEntry.Enable()
+			customMsEntry.Show()
 		} else {
-			customMsEntry.Disable()
+			customMsEntry.Hide()
 		}
 	}
 
@@ -924,7 +924,7 @@ func main() {
 		widget.NewSeparator(),
 		widget.NewLabelWithStyle("Typing Speed", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		speedSelect,
-		customMsEntry,
+		customMsEntry, // hidden unless Custom is selected
 	)
 
 	header := container.NewBorder(nil, nil, left, right, nil)
