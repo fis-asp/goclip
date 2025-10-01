@@ -704,6 +704,59 @@ func main() {
 	}, nil)
 	layoutSelect.Selected = "Auto (Use System)"
 
+	// --- Typing speed controls (dropdown + optional custom ms field) ---
+	speedSelect := widget.NewSelect([]string{
+		"Default (no delay)",
+		"Medium (50 ms)",
+		"Slow (100 ms)",
+		"Super Slow (250 ms)",
+		"Custom",
+	}, nil)
+	speedSelect.Selected = "Default (no delay)"
+
+	customMsEntry := widget.NewEntry()
+	customMsEntry.SetPlaceHolder("ms per char")
+	customMsEntry.Hide() // start hidden unless Custom is selected
+
+	speedSelect.OnChanged = func(s string) {
+		if s == "Custom" {
+			customMsEntry.Show()
+		} else {
+			customMsEntry.Hide()
+		}
+	}
+
+	// Default = 0 ms, Medium = 50 ms, Slow = 100 ms, Super Slow = 250 ms, Custom = parsed value (fallback to 0 ms on error)
+	getPerCharDelay := func() time.Duration {
+		switch speedSelect.Selected {
+		case "Medium (50 ms)":
+			return 50 * time.Millisecond
+		case "Slow (100 ms)":
+			return 100 * time.Millisecond
+		case "Super Slow (250 ms)":
+			return 250 * time.Millisecond
+		case "Custom":
+			v := strings.TrimSpace(customMsEntry.Text)
+			if v == "" {
+				return 0
+			}
+			var acc int64
+			for _, ch := range v {
+				if ch < '0' || ch > '9' {
+					return 0
+				}
+				acc = acc*10 + int64(ch-'0')
+				if acc > 10000 {
+					acc = 10000
+					break
+				}
+			}
+			return time.Duration(acc) * time.Millisecond
+		default:
+			return 0
+		}
+	}
+
 	winOptions := []string{}
 	winMap := map[string]windows.Handle{}
 
@@ -793,7 +846,8 @@ func main() {
 			return
 		}
 
-		if err := sendText(txt, layoutSelect.Selected, 7*time.Millisecond); err != nil {
+		perChar := getPerCharDelay()
+		if err := sendText(txt, layoutSelect.Selected, perChar); err != nil {
 			status.SetText("Error typing: " + err.Error())
 			return
 		}
@@ -841,7 +895,8 @@ func main() {
 			return
 		}
 
-		if err := sendText(txt, layoutSelect.Selected, 7*time.Millisecond); err != nil {
+		perChar := getPerCharDelay()
+		if err := sendText(txt, layoutSelect.Selected, perChar); err != nil {
 			status.SetText("Error typing clipboard: " + err.Error())
 			return
 		}
@@ -862,10 +917,14 @@ func main() {
 		lastActiveLabel,
 	)
 
-	// Right side: layout selector
+	// Right side: layout selector + typing speed controls
 	right := container.NewVBox(
 		widget.NewLabelWithStyle("Keyboard Layout", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		layoutSelect,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("Typing Speed", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		speedSelect,
+		customMsEntry, // hidden unless Custom is selected
 	)
 
 	header := container.NewBorder(nil, nil, left, right, nil)
