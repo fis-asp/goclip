@@ -584,10 +584,16 @@ func sendCharPhysical(r rune, hkl windows.Handle, perCharDelay time.Duration) er
 	return nil
 }
 
-func sendText(text string, layout string, perCharDelay time.Duration) error {
+func sendText(text string, layout string, perCharDelay time.Duration, shouldStop func() bool) error {
 	hkl := loadHKLByName(layout)
 	text = strings.ReplaceAll(text, "\r\n", "\n")
+
 	for _, r := range text {
+		if shouldStop != nil && shouldStop() {
+			// cancelled by user
+			return nil
+		}
+
 		if r == '\n' {
 			if err := sendEnter(hkl); err != nil {
 				return err
@@ -595,10 +601,12 @@ func sendText(text string, layout string, perCharDelay time.Duration) error {
 			time.Sleep(perCharDelay)
 			continue
 		}
+
 		if err := sendCharPhysical(r, hkl, perCharDelay); err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -869,8 +877,54 @@ func main() {
 	// Ensure cleanup when main exits
 	defer stopForegroundWatcher()
 
+	// --- Typing state / stop handling ---
+	var typingMu sync.Mutex
+	typingStopRequested := false
+
+	setStopRequested := func(v bool) {
+		typingMu.Lock()
+		typingStopRequested = v
+		typingMu.Unlock()
+	}
+
+	shouldStop := func() bool {
+		typingMu.Lock()
+		v := typingStopRequested
+		typingMu.Unlock()
+		return v
+	}
+
+	var typeBtn *widget.Button
+	var typeClipboardBtn *widget.Button
+	var stopBtn *widget.Button
+	var actionContainer *fyne.Container
+
+	setTypingUI := func(active bool) {
+		if actionContainer == nil {
+			return
+		}
+		if active {
+			if stopBtn != nil {
+				actionContainer.Objects = []fyne.CanvasObject{stopBtn}
+				actionContainer.Refresh()
+			}
+		} else {
+			if typeBtn != nil && typeClipboardBtn != nil {
+				actionContainer.Objects = []fyne.CanvasObject{typeBtn, typeClipboardBtn}
+				actionContainer.Refresh()
+			}
+		}
+	}
+
+	// Stop button (shown while typing)
+	stopBtn = widget.NewButton("Stop", func() {
+		setStopRequested(true)
+		status.SetText("Stopping typing...")
+	})
+	stopBtn.Importance = widget.DangerImportance
+
 	// --- Type Button ---
-	typeBtn := widget.NewButton("Type", func() {
+	typeBtn = widget.NewButton("Type", func() {
 		selected := windowSelect.Selected
 
 		laMu.RLock()
@@ -905,21 +959,36 @@ func main() {
 		}
 
 		perChar := getPerCharDelay(txt)
-		if err := sendText(txt, layoutSelect.Selected, perChar); err != nil {
-			status.SetText("Error typing: " + err.Error())
-			return
-		}
+		setStopRequested(false)
+		setTypingUI(true)
+		status.SetText("Typing...")
 
-		title := strings.TrimSpace(getWindowText(hwnd))
-		if title == "" {
-			title = curTitle
-		}
-		title = truncateRunes(title, 30)
-		status.SetText("Typed to: " + title)
+		go func(hwnd windows.Handle, curTitle string, txt string, perChar time.Duration) {
+			err := sendText(txt, layoutSelect.Selected, perChar, shouldStop)
+			canceled := shouldStop()
+
+			title := strings.TrimSpace(getWindowText(hwnd))
+			if title == "" {
+				title = curTitle
+			}
+			title = truncateRunes(title, 30)
+
+			fyne.Do(func() {
+				if canceled {
+					status.SetText("Typing stopped by user.")
+				} else if err != nil {
+					status.SetText("Error typing: " + err.Error())
+				} else {
+					status.SetText("Typed to: " + title)
+				}
+				setTypingUI(false)
+				setStopRequested(false)
+			})
+		}(hwnd, curTitle, txt, perChar)
 	})
 
 	// --- Type Clipboard Button ---
-	typeClipboardBtn := widget.NewButton("Type Clipboard", func() {
+	typeClipboardBtn = widget.NewButton("Type Clipboard", func() {
 		selected := windowSelect.Selected
 
 		laMu.RLock()
@@ -954,18 +1023,36 @@ func main() {
 		}
 
 		perChar := getPerCharDelay(txt)
-		if err := sendText(txt, layoutSelect.Selected, perChar); err != nil {
-			status.SetText("Error typing clipboard: " + err.Error())
-			return
-		}
+		setStopRequested(false)
+		setTypingUI(true)
+		status.SetText("Typing clipboard...")
 
-		title := strings.TrimSpace(getWindowText(hwnd))
-		if title == "" {
-			title = curTitle
-		}
-		title = truncateRunes(title, 30)
-		status.SetText("Typed clipboard to: " + title)
+		go func(hwnd windows.Handle, curTitle string, txt string, perChar time.Duration) {
+			err := sendText(txt, layoutSelect.Selected, perChar, shouldStop)
+			canceled := shouldStop()
+
+			title := strings.TrimSpace(getWindowText(hwnd))
+			if title == "" {
+				title = curTitle
+			}
+			title = truncateRunes(title, 30)
+
+			fyne.Do(func() {
+				if canceled {
+					status.SetText("Typing stopped by user.")
+				} else if err != nil {
+					status.SetText("Error typing clipboard: " + err.Error())
+				} else {
+					status.SetText("Typed clipboard to: " + title)
+				}
+				setTypingUI(false)
+				setStopRequested(false)
+			})
+		}(hwnd, curTitle, txt, perChar)
 	})
+
+	// Action container that switches between [Type, Type Clipboard] and [Stop]
+	actionContainer = container.NewHBox(typeBtn, typeClipboardBtn)
 
 	// Left side: window selector + buttons
 	left := container.NewVBox(
@@ -991,7 +1078,7 @@ func main() {
 		widget.NewLabelWithStyle("Text to type", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		inputRow,
 		delayLabel,
-		container.NewHBox(typeBtn, typeClipboardBtn),
+		actionContainer,
 		status,
 	)
 
