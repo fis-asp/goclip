@@ -706,29 +706,56 @@ func main() {
 
 	// --- Typing speed controls (dropdown + optional custom ms field) ---
 	speedSelect := widget.NewSelect([]string{
-		"Default (no delay)",
+		"Default (Auto)",
 		"Medium (50 ms)",
 		"Slow (100 ms)",
 		"Super Slow (250 ms)",
 		"Custom",
 	}, nil)
-	speedSelect.Selected = "Default (no delay)"
+	speedSelect.Selected = "Default (Auto)"
 
 	customMsEntry := widget.NewEntry()
 	customMsEntry.SetPlaceHolder("ms per char")
 	customMsEntry.Hide() // start hidden unless Custom is selected
 
-	speedSelect.OnChanged = func(s string) {
-		if s == "Custom" {
-			customMsEntry.Show()
-		} else {
-			customMsEntry.Hide()
-		}
-	}
-
-	// Default = 0 ms, Medium = 50 ms, Slow = 100 ms, Super Slow = 250 ms, Custom = parsed value (fallback to 0 ms on error)
-	getPerCharDelay := func() time.Duration {
+	// Dynamic per-character delay selection
+	getPerCharDelay := func(text string) time.Duration {
 		switch speedSelect.Selected {
+		case "Default (Auto)":
+			runeCount := 0
+			lines := 1
+			for _, ch := range text {
+				runeCount++
+				if ch == '\n' {
+					lines++
+				}
+			}
+
+			// For very short snippets, no delay
+			if runeCount <= 200 && lines <= 5 {
+				return 0
+			}
+
+			// Base delay from line count (more lines -> more delay)
+			msByLines := lines
+
+			// Additional delay from character count (large blocks with few newlines)
+			msByChars := runeCount / 200 // 200 chars per 1 ms
+
+			ms := msByLines
+			if msByChars > ms {
+				ms = msByChars
+			}
+
+			if ms < 10 {
+				ms = 10
+			}
+			if ms > 50 {
+				ms = 50
+			}
+
+			return time.Duration(ms) * time.Millisecond
+
 		case "Medium (50 ms)":
 			return 50 * time.Millisecond
 		case "Slow (100 ms)":
@@ -757,6 +784,37 @@ func main() {
 		}
 	}
 
+	// Display for current delay (only shown for Default (Auto))
+	delayLabel := widget.NewLabel("Per-character delay: 0 ms")
+
+	updateDelayLabel := func() {
+		if speedSelect.Selected != "Default (Auto)" {
+			delayLabel.Hide()
+			return
+		}
+		delayLabel.Show()
+		d := getPerCharDelay(inputEntry.Text)
+		ms := d.Milliseconds()
+		delayLabel.SetText(fmt.Sprintf("Per-character delay: %d ms", ms))
+	}
+
+	speedSelect.OnChanged = func(s string) {
+		if s == "Custom" {
+			customMsEntry.Show()
+		} else {
+			customMsEntry.Hide()
+		}
+		updateDelayLabel()
+	}
+
+	customMsEntry.OnChanged = func(s string) {
+		updateDelayLabel()
+	}
+
+	inputEntry.OnChanged = func(s string) {
+		updateDelayLabel()
+	}
+
 	winOptions := []string{}
 	winMap := map[string]windows.Handle{}
 
@@ -781,7 +839,7 @@ func main() {
 		winOptions = []string{}
 		winMap = map[string]windows.Handle{}
 		for _, wi := range wins {
-			short := truncateRunes(wi.Title, 30) // ← limit to 30 chars in list
+			short := truncateRunes(wi.Title, 30) // limit to 30 chars in list
 			label := fmt.Sprintf("%s (0x%X)", short, uintptr(wi.Hwnd))
 			winOptions = append(winOptions, label)
 			winMap[label] = wi.Hwnd
@@ -805,7 +863,7 @@ func main() {
 		_ = lastActiveText.Set("Last active: " + t)
 	})
 	if err != nil {
-		status.SetText("⚠️ Foreground watcher failed → falling back: " + err.Error())
+		status.SetText("Warning: foreground watcher failed, falling back: " + err.Error())
 	}
 
 	// Ensure cleanup when main exits
@@ -846,7 +904,7 @@ func main() {
 			return
 		}
 
-		perChar := getPerCharDelay()
+		perChar := getPerCharDelay(txt)
 		if err := sendText(txt, layoutSelect.Selected, perChar); err != nil {
 			status.SetText("Error typing: " + err.Error())
 			return
@@ -895,7 +953,7 @@ func main() {
 			return
 		}
 
-		perChar := getPerCharDelay()
+		perChar := getPerCharDelay(txt)
 		if err := sendText(txt, layoutSelect.Selected, perChar); err != nil {
 			status.SetText("Error typing clipboard: " + err.Error())
 			return
@@ -932,6 +990,7 @@ func main() {
 	body := container.NewVBox(
 		widget.NewLabelWithStyle("Text to type", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		inputRow,
+		delayLabel,
 		container.NewHBox(typeBtn, typeClipboardBtn),
 		status,
 	)
@@ -939,6 +998,7 @@ func main() {
 	content := container.NewBorder(header, nil, nil, nil, body)
 	w.SetContent(content)
 
+	updateDelayLabel()
 	refreshWindows()
 	w.ShowAndRun()
 }
