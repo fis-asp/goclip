@@ -243,8 +243,6 @@ bool mapRuneToKey(UniChar target, uint16_t *outKeyCode, uint32_t *outMods) {
 	return false;
 }
 
-// (removed) findKeyForChar: reverted to Unicode-only typing to avoid crashes
-
 */
 import "C"
 
