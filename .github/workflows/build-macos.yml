@@ -1,0 +1,107 @@
+name: Build goclip (macOS)
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+          cache: true
+
+      - name: Set build environment
+        shell: bash
+        run: |
+          echo "CGO_ENABLED=1" >> $GITHUB_ENV
+          echo "GOOS=darwin" >> $GITHUB_ENV
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            v="${{ github.ref_name }}"
+          else
+            sha="${{ github.sha }}"
+            v="dev-${sha:0:7}"
+          fi
+          echo "APP_VERSION=$v" >> $GITHUB_ENV
+
+      - name: Go mod download
+        run: go mod download
+
+      - name: Verify icon exists
+        run: |
+          if [ ! -f "assets/logo/app.ico" ]; then
+            echo "Icon not found at assets/logo/app.ico"
+            exit 1
+          fi
+
+      - name: Build goclip (macOS arm64)
+        run: |
+          mkdir -p dist
+          GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/goclip-darwin-arm64 .
+
+      - name: Build goclip (macOS amd64)
+        run: |
+          GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/goclip-darwin-amd64 .
+
+      - name: Create universal binary
+        run: |
+          lipo -create -output dist/goclip-darwin-universal dist/goclip-darwin-arm64 dist/goclip-darwin-amd64
+
+      - name: Package zip (arm64)
+        run: |
+          cd dist
+          zip goclip-${APP_VERSION}-darwin-arm64.zip goclip-darwin-arm64
+
+      - name: Package zip (amd64)
+        run: |
+          cd dist
+          zip goclip-${APP_VERSION}-darwin-amd64.zip goclip-darwin-amd64
+
+      - name: Package zip (universal)
+        run: |
+          cd dist
+          zip goclip-${APP_VERSION}-darwin-universal.zip goclip-darwin-universal
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: goclip-${{ env.APP_VERSION }}-darwin
+          path: |
+            dist/goclip-darwin-arm64
+            dist/goclip-darwin-amd64
+            dist/goclip-darwin-universal
+            dist/goclip-${{ env.APP_VERSION }}-darwin-arm64.zip
+            dist/goclip-${{ env.APP_VERSION }}-darwin-amd64.zip
+            dist/goclip-${{ env.APP_VERSION }}-darwin-universal.zip
+          if-no-files-found: error
+
+      - name: Publish GitHub Release (tagged)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: |
+            dist/goclip-darwin-arm64
+            dist/goclip-darwin-amd64
+            dist/goclip-darwin-universal
+            dist/goclip-${{ env.APP_VERSION }}-darwin-arm64.zip
+            dist/goclip-${{ env.APP_VERSION }}-darwin-amd64.zip
+            dist/goclip-${{ env.APP_VERSION }}-darwin-universal.zip
+          tag: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          allowUpdates: true
+          replacesArtifacts: true
+          generateReleaseNotes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
