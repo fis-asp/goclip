@@ -1,4 +1,4 @@
-module coclip
+module goclip
 
 go 1.24.6
 
