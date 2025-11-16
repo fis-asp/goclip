@@ -1,0 +1,40 @@
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+
+# Coverage outputs
+*.out
+coverage*.out
+
+# Logs
+*.log
+
+# Build output directories
+/bin/
+/build/
+/dist/
+
+# Dependency directories (uncomment if you vendor)
+# vendor/
+
+# OS-specific
+.DS_Store
+
+# Editors/IDE
+.vscode/
+.idea/
+*.iml
+
+# Environment files
+.env
+.env.*
+
+# Cache and temp
+*.swp
+*.swo

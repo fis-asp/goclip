@@ -10,6 +10,8 @@ package main
 #import <Carbon/Carbon.h>
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
+#import <stdlib.h>
+#import <stdint.h>
 
 // Get all visible windows
 typedef struct {
@@ -97,7 +99,7 @@ bool activateWindowByPID(int pid) {
     @autoreleasepool {
         NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
         if (app) {
-            return [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+            return [app activateWithOptions:NSApplicationActivateAllWindows];
         }
         return false;
     }
@@ -129,12 +131,127 @@ void getAppNameForPID(int pid, char* name, int maxLen) {
         name[0] = 0;
     }
 }
+
+// Check if accessibility permissions are granted
+bool checkAccessibilityPermissions() {
+    NSDictionary *options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
+    return AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+}
+
+// Raise and focus a specific window belonging to pid, matched by exact title.
+bool raiseWindowByPIDAndTitle(int pid, const char* ctitle) {
+	if (!ctitle) return false;
+	CFStringRef targetTitle = CFStringCreateWithCString(kCFAllocatorDefault, ctitle, kCFStringEncodingUTF8);
+	if (!targetTitle) return false;
+
+	AXUIElementRef app = AXUIElementCreateApplication(pid);
+	if (!app) { CFRelease(targetTitle); return false; }
+
+	CFArrayRef windows = NULL;
+	AXError err = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute, (CFTypeRef *)&windows);
+	if (err != kAXErrorSuccess || !windows) {
+		CFRelease(app);
+		CFRelease(targetTitle);
+		return false;
+	}
+
+	bool ok = false;
+	CFIndex count = CFArrayGetCount(windows);
+	for (CFIndex i = 0; i < count; i++) {
+		AXUIElementRef win = (AXUIElementRef)CFArrayGetValueAtIndex(windows, i);
+		if (!win) continue;
+		CFStringRef wt = NULL;
+		if (AXUIElementCopyAttributeValue(win, kAXTitleAttribute, (CFTypeRef *)&wt) == kAXErrorSuccess && wt) {
+			if (CFStringCompare(wt, targetTitle, 0) == kCFCompareEqualTo) {
+				// Try to focus the window and raise it
+				AXUIElementSetAttributeValue(app, kAXFocusedWindowAttribute, win);
+				AXUIElementPerformAction(win, kAXRaiseAction);
+				ok = true;
+				CFRelease(wt);
+				break;
+			}
+			CFRelease(wt);
+		}
+	}
+
+	CFRelease(windows);
+	CFRelease(app);
+	CFRelease(targetTitle);
+	return ok;
+}
+
+// Note: Matching by CGWindowNumber is not portable via AX on all macOS versions.
+// We rely on title matching above for specific window activation.
+
+// Map a Unicode character to a keycode + basic modifiers (Shift, Option) for the current keyboard layout.
+// outMods bit 0 => Shift, bit 1 => Option
+bool mapRuneToKey(UniChar target, uint16_t *outKeyCode, uint32_t *outMods) {
+	// Prefer ASCII-capable source, fallback to current
+	TISInputSourceRef source = TISCopyCurrentASCIICapableKeyboardLayoutInputSource();
+	if (!source) source = TISCopyCurrentKeyboardLayoutInputSource();
+	if (!source) return false;
+
+	CFDataRef layoutData = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData);
+	if (!layoutData) {
+		CFRelease(source);
+		return false;
+	}
+	const UCKeyboardLayout *layout = (const UCKeyboardLayout *)CFDataGetBytePtr(layoutData);
+	if (!layout) {
+		CFRelease(source);
+		return false;
+	}
+
+	// Try keycodes 0..127 and modifier combos: none, Shift, Option, Shift+Option
+	for (UInt16 keyCode = 0; keyCode < 128; keyCode++) {
+		for (int combo = 0; combo < 4; combo++) {
+			UInt32 deadKeyState = 0;
+			UniChar chars[8] = {0};
+			UniCharCount length = 0;
+
+			UInt32 mods = 0;
+			if (combo & 1) mods |= (shiftKey >> 8);
+			if (combo & 2) mods |= (optionKey >> 8);
+
+			OSStatus s = UCKeyTranslate(
+				layout,
+				keyCode,
+				kUCKeyActionDisplay,
+				mods,
+				LMGetKbdType(),
+				kUCKeyTranslateNoDeadKeysBit,
+				&deadKeyState,
+				8,
+				&length,
+				chars
+			);
+			if (s == noErr && length > 0 && chars[0] == target) {
+				if (outKeyCode) *outKeyCode = (uint16_t)keyCode;
+				if (outMods) {
+					uint32_t mask = 0;
+					if (combo & 1) mask |= 1; // Shift
+					if (combo & 2) mask |= 2; // Option
+					*outMods = mask;
+				}
+				CFRelease(source);
+				return true;
+			}
+		}
+	}
+
+	CFRelease(source);
+	return false;
+}
+
+// (removed) findKeyForChar: reverted to Unicode-only typing to avoid crashes
+
 */
 import "C"
 
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -161,6 +278,18 @@ type windowInfo struct {
 	Title        string
 	AppName      string
 }
+
+// Layout-aware mapping cache (built on UI thread at startup)
+type keyMods struct {
+	code   uint16
+	shift  bool
+	option bool
+}
+
+var (
+	layoutMap   = map[rune]keyMods{}
+	layoutMapMu sync.RWMutex
+)
 
 var (
 	ignoredAppNamesLower = map[string]struct{}{
@@ -231,6 +360,19 @@ func activateWindow(pid int) bool {
 	return bool(result)
 }
 
+// activateWindowToTitle tries to focus a specific window by title for the given PID.
+// Falls back to app-level activation if window focus fails.
+func activateWindowToTitle(pid int, title string) bool {
+	ctitle := C.CString(title)
+	defer C.free(unsafe.Pointer(ctitle))
+	if pid != 0 && len(title) > 0 {
+		if bool(C.raiseWindowByPIDAndTitle(C.int(pid), ctitle)) {
+			return true
+		}
+	}
+	return activateWindow(pid)
+}
+
 // sendText types the text using Core Graphics events
 func sendText(text string, layout string, perCharDelay time.Duration, shouldStop func() bool) error {
 	// Normalize line endings
@@ -249,6 +391,26 @@ func sendText(text string, layout string, perCharDelay time.Duration, shouldStop
 			continue
 		}
 
+		// Try layout-aware physical mapping first
+		layoutMapMu.RLock()
+		if km, ok := layoutMap[r]; ok {
+			layoutMapMu.RUnlock()
+			if err := sendKeyPressWithMods(km.code, km.shift, km.option); err != nil {
+				return err
+			}
+			time.Sleep(perCharDelay)
+			continue
+		}
+		layoutMapMu.RUnlock()
+
+		// Try US ASCII physical mapping next
+		if handled, err := sendASCIICharUS(r); err != nil {
+			return err
+		} else if handled {
+			time.Sleep(perCharDelay)
+			continue
+		}
+
 		if err := sendChar(r); err != nil {
 			return err
 		}
@@ -261,15 +423,15 @@ func sendText(text string, layout string, perCharDelay time.Duration, shouldStop
 // sendKeyPress sends a key press and release
 func sendKeyPress(keyCode uint16) error {
 	// Create key down event
-	keyDown := C.CGEventCreateKeyboardEvent(nil, C.CGKeyCode(keyCode), C.bool(true))
-	if keyDown == nil {
+	keyDown := C.CGEventCreateKeyboardEvent(C.CGEventSourceRef(0), C.CGKeyCode(keyCode), C.bool(true))
+	if keyDown == 0 {
 		return fmt.Errorf("failed to create key down event")
 	}
 	defer C.CFRelease(C.CFTypeRef(keyDown))
 
 	// Create key up event
-	keyUp := C.CGEventCreateKeyboardEvent(nil, C.CGKeyCode(keyCode), C.bool(false))
-	if keyUp == nil {
+	keyUp := C.CGEventCreateKeyboardEvent(C.CGEventSourceRef(0), C.CGKeyCode(keyCode), C.bool(false))
+	if keyUp == 0 {
 		return fmt.Errorf("failed to create key up event")
 	}
 	defer C.CFRelease(C.CFTypeRef(keyUp))
@@ -281,7 +443,135 @@ func sendKeyPress(keyCode uint16) error {
 	return nil
 }
 
-// sendChar sends a character using Unicode
+// sendKeyPressWithMods presses modifiers (Shift/Option) as needed, taps key, then releases modifiers.
+func sendKeyPressWithMods(keyCode uint16, needShift bool, needOption bool) error {
+	const (
+		kVK_Shift  uint16 = 0x38
+		kVK_Option uint16 = 0x3A
+	)
+
+	// Press modifiers down
+	if needOption {
+		evt := C.CGEventCreateKeyboardEvent(C.CGEventSourceRef(0), C.CGKeyCode(kVK_Option), C.bool(true))
+		if evt == 0 {
+			return fmt.Errorf("failed to create option down event")
+		}
+		C.CGEventPost(C.kCGHIDEventTap, evt)
+		C.CFRelease(C.CFTypeRef(evt))
+	}
+	if needShift {
+		evt := C.CGEventCreateKeyboardEvent(C.CGEventSourceRef(0), C.CGKeyCode(kVK_Shift), C.bool(true))
+		if evt == 0 {
+			// try to release option if pressed
+			if needOption {
+				up := C.CGEventCreateKeyboardEvent(C.CGEventSourceRef(0), C.CGKeyCode(kVK_Option), C.bool(false))
+				if up != 0 {
+					C.CGEventPost(C.kCGHIDEventTap, up)
+					C.CFRelease(C.CFTypeRef(up))
+				}
+			}
+			return fmt.Errorf("failed to create shift down event")
+		}
+		C.CGEventPost(C.kCGHIDEventTap, evt)
+		C.CFRelease(C.CFTypeRef(evt))
+	}
+
+	// Tap the key
+	if err := sendKeyPress(keyCode); err != nil {
+		// Release modifiers on error
+		if needShift {
+			up := C.CGEventCreateKeyboardEvent(C.CGEventSourceRef(0), C.CGKeyCode(kVK_Shift), C.bool(false))
+			if up != 0 {
+				C.CGEventPost(C.kCGHIDEventTap, up)
+				C.CFRelease(C.CFTypeRef(up))
+			}
+		}
+		if needOption {
+			up := C.CGEventCreateKeyboardEvent(C.CGEventSourceRef(0), C.CGKeyCode(kVK_Option), C.bool(false))
+			if up != 0 {
+				C.CGEventPost(C.kCGHIDEventTap, up)
+				C.CFRelease(C.CFTypeRef(up))
+			}
+		}
+		return err
+	}
+
+	// Release modifiers
+	if needShift {
+		up := C.CGEventCreateKeyboardEvent(C.CGEventSourceRef(0), C.CGKeyCode(kVK_Shift), C.bool(false))
+		if up == 0 {
+			return fmt.Errorf("failed to create shift up event")
+		}
+		C.CGEventPost(C.kCGHIDEventTap, up)
+		C.CFRelease(C.CFTypeRef(up))
+	}
+	if needOption {
+		up := C.CGEventCreateKeyboardEvent(C.CGEventSourceRef(0), C.CGKeyCode(kVK_Option), C.bool(false))
+		if up == 0 {
+			return fmt.Errorf("failed to create option up event")
+		}
+		C.CGEventPost(C.kCGHIDEventTap, up)
+		C.CFRelease(C.CFTypeRef(up))
+	}
+	return nil
+}
+
+// sendASCIICharUS tries to send a basic US-ANSI ASCII character using physical keycodes.
+// Returns (handled=true) if it sent it using keycodes; otherwise false to fall back.
+func sendASCIICharUS(r rune) (bool, error) {
+	// Mac virtual keycodes for US ANSI keyboard
+	// Letters: a=0, s=1, d=2, f=3, h=4, g=5, z=6, x=7, c=8, v=9, b=11,
+	// q=12, w=13, e=14, r=15, y=16, t=17, 1=18, 2=19, 3=20, 4=21, 6=22, 5=23,
+	// = 24, 9=25, 7=26, - 27, 8=28, 0=29, ] 30, o=31, u=32, [ 33, i=34, p=35,
+	// return=36, l=37, j=38, ' 39, k=40, ; 41, \ 42, , 43, / 44, n=45, m=46,
+	// . 47, tab=48, space=49, ` 50, delete=51
+
+	type entry struct {
+		code  uint16
+		shift bool
+	}
+	var m map[rune]entry = map[rune]entry{
+		// Space and basic control
+		' ': {49, false},
+
+		// Digits row (no shift)
+		'1': {18, false}, '2': {19, false}, '3': {20, false}, '4': {21, false}, '5': {23, false},
+		'6': {22, false}, '7': {26, false}, '8': {28, false}, '9': {25, false}, '0': {29, false},
+
+		// Letters (lowercase)
+		'a': {0, false}, 's': {1, false}, 'd': {2, false}, 'f': {3, false}, 'h': {4, false}, 'g': {5, false},
+		'z': {6, false}, 'x': {7, false}, 'c': {8, false}, 'v': {9, false}, 'b': {11, false},
+		'q': {12, false}, 'w': {13, false}, 'e': {14, false}, 'r': {15, false}, 'y': {16, false}, 't': {17, false},
+		'o': {31, false}, 'u': {32, false}, 'i': {34, false}, 'p': {35, false}, 'l': {37, false}, 'j': {38, false},
+		'k': {40, false}, 'n': {45, false}, 'm': {46, false},
+
+		// Punctuation (no shift)
+		'-': {27, false}, '=': {24, false}, '[': {33, false}, ']': {30, false}, '\\': {42, false},
+		';': {41, false}, '\'': {39, false}, ',': {43, false}, '.': {47, false}, '/': {44, false}, '`': {50, false},
+
+		// Shifted symbols
+		'!': {18, true}, '@': {19, true}, '#': {20, true}, '$': {21, true}, '%': {23, true}, '^': {22, true},
+		'&': {26, true}, '*': {28, true}, '(': {25, true}, ')': {29, true}, '_': {27, true}, '+': {24, true},
+		'{': {33, true}, '}': {30, true}, '|': {42, true}, ':': {41, true}, '"': {39, true}, '<': {43, true},
+		'>': {47, true}, '?': {44, true}, '~': {50, true},
+	}
+
+	// Uppercase letters via shift
+	if r >= 'A' && r <= 'Z' {
+		lower := rune(r - 'A' + 'a')
+		if e, ok := m[lower]; ok {
+			return true, sendKeyPressWithMods(e.code, true, false)
+		}
+		return false, nil
+	}
+
+	if e, ok := m[r]; ok {
+		return true, sendKeyPressWithMods(e.code, e.shift, false)
+	}
+	return false, nil
+}
+
+// sendChar sends a character using Unicode (reverted to stable path)
 func sendChar(r rune) error {
 	// Convert rune to UTF-16
 	utf16 := []uint16{uint16(r)}
@@ -296,8 +586,8 @@ func sendChar(r rune) error {
 
 	for _, code := range utf16 {
 		// Create Unicode keyboard event
-		keyDown := C.CGEventCreateKeyboardEvent(nil, 0, C.bool(true))
-		if keyDown == nil {
+		keyDown := C.CGEventCreateKeyboardEvent(C.CGEventSourceRef(0), 0, C.bool(true))
+		if keyDown == 0 {
 			return fmt.Errorf("failed to create unicode key down event")
 		}
 
@@ -305,8 +595,8 @@ func sendChar(r rune) error {
 		C.CGEventKeyboardSetUnicodeString(keyDown, 1, (*C.UniChar)(unsafe.Pointer(&code)))
 
 		// Create key up event
-		keyUp := C.CGEventCreateKeyboardEvent(nil, 0, C.bool(false))
-		if keyUp == nil {
+		keyUp := C.CGEventCreateKeyboardEvent(C.CGEventSourceRef(0), 0, C.bool(false))
+		if keyUp == 0 {
 			C.CFRelease(C.CFTypeRef(keyDown))
 			return fmt.Errorf("failed to create unicode key up event")
 		}
@@ -371,6 +661,72 @@ func main() {
 	if res := loadAppIcon(); res != nil {
 		myApp.SetIcon(res)
 	}
+
+	// Check for accessibility permissions
+	hasPermission := bool(C.checkAccessibilityPermissions())
+	if !hasPermission {
+		// Create a window to show the permission requirement
+		permWindow := myApp.NewWindow("goclip - Accessibility Required")
+		permWindow.Resize(fyne.NewSize(500, 250))
+
+		message := widget.NewLabel(
+			"goclip needs Accessibility permissions to send keyboard events.\n\n" +
+				"Please grant access in:\n" +
+				"System Settings → Privacy & Security → Accessibility\n\n" +
+				"After granting permission, restart goclip.",
+		)
+		message.Wrapping = fyne.TextWrapWord
+
+		openSettingsBtn := widget.NewButton("Open System Settings", func() {
+			// Use os/exec to open system settings
+			cmd := exec.Command("open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+			cmd.Run()
+		})
+
+		content := container.NewVBox(
+			widget.NewLabel("⚠️ Permission Required"),
+			widget.NewSeparator(),
+			message,
+			openSettingsBtn,
+		)
+
+		permWindow.SetContent(container.NewPadded(content))
+		permWindow.CenterOnScreen()
+		permWindow.ShowAndRun()
+		return
+	}
+
+	// Build a small layout-aware mapping on the UI thread for common characters,
+	// including German-specific letters and punctuation. This avoids calling TIS APIs from a goroutine.
+	buildLayoutMapping := func() {
+		candidates := []rune{}
+		// Basic ASCII
+		for r := rune(32); r <= rune(126); r++ {
+			candidates = append(candidates, r)
+		}
+		// German specifics
+		candidates = append(candidates, []rune{'ä', 'ö', 'ü', 'Ä', 'Ö', 'Ü', 'ß', '€', '§', '°'}...)
+
+		layoutMapMu.Lock()
+		defer layoutMapMu.Unlock()
+		layoutMap = map[rune]keyMods{}
+		for _, r := range candidates {
+			var cCode C.uint16_t
+			var cMods C.uint32_t
+			if C.mapRuneToKey(C.UniChar(r), &cCode, &cMods) {
+				km := keyMods{code: uint16(cCode)}
+				if (uint32(cMods) & 1) != 0 {
+					km.shift = true
+				}
+				if (uint32(cMods) & 2) != 0 {
+					km.option = true
+				}
+				layoutMap[r] = km
+			}
+		}
+	}
+	// Build immediately (runs on UI thread here)
+	buildLayoutMapping()
 
 	// our own app name (lower) to avoid listing ourselves
 	selfPath, _ := os.Executable()
@@ -539,6 +895,18 @@ func main() {
 	windowSelect := widget.NewSelect(winOptions, nil)
 	windowSelect.PlaceHolder = "None (use last active)"
 
+	// TODO(macOS): Improve window target selector
+	// - The dropdown should list real, stable window targets and reliably focus them when selected.
+	// - Current state: works via exact AX title match (fallback to app activation). Good enough for now.
+	// - Next steps:
+	//   1) Add partial-title matching fallback if exact match fails (e.g., case-insensitive contains).
+	//   2) Explore more stable identifiers than titles (AX attributes vary; kAXWindowNumberAttribute is
+	//      not guaranteed on all systems). Consider correlating CGWindowList entries with AX windows.
+	//   3) Auto-refresh the window list on focus changes to keep the dropdown current.
+	//   4) Optionally display PID/window id and app name in the label for easier disambiguation.
+	//   5) Consider a user setting to prefer app-wide activation if specific window focusing fails.
+	// - Keep Accessibility permission checks in place; AX APIs require it.
+
 	clearBtn := widget.NewButton("Clear", func() {
 		windowSelect.Selected = ""
 		windowSelect.Refresh()
@@ -655,6 +1023,7 @@ func main() {
 			}
 			targetPID = wi.PID
 			targetTitle = wi.Title
+			_ = wi.WindowNumber // reserved for future use
 		}
 
 		if targetPID == 0 {
@@ -662,8 +1031,13 @@ func main() {
 			return
 		}
 
-		// Activate the target window
-		if !activateWindow(targetPID) {
+		// Activate selected window by title or fall back to app/last active
+		if selected != "" {
+			if !activateWindowToTitle(targetPID, targetTitle) {
+				status.SetText("Failed to activate target window.")
+				return
+			}
+		} else if !activateWindow(targetPID) {
 			status.SetText("Failed to activate target window.")
 			return
 		}
@@ -720,6 +1094,7 @@ func main() {
 			}
 			targetPID = wi.PID
 			targetTitle = wi.Title
+			_ = wi.WindowNumber // reserved for future use
 		}
 
 		if targetPID == 0 {
@@ -727,8 +1102,12 @@ func main() {
 			return
 		}
 
-		// Activate the target window
-		if !activateWindow(targetPID) {
+		if selected != "" {
+			if !activateWindowToTitle(targetPID, targetTitle) {
+				status.SetText("Failed to activate target window.")
+				return
+			}
+		} else if !activateWindow(targetPID) {
 			status.SetText("Failed to activate target window.")
 			return
 		}
