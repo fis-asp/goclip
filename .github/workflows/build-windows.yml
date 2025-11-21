@@ -73,9 +73,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~\go\bin
-          key: ${{ runner.os }}-go-tools-${{ hashFiles('**/go.mod') }}-goversioninfo-latest
+          key: ${{ runner.os }}-go-tools-${{ hashFiles('**/go.mod') }}
           restore-keys: |
-            ${{ runner.os }}-go-tools-${{ hashFiles('**/go.mod') }}-
             ${{ runner.os }}-go-tools-
 
       - name: Install goversioninfo (for embedding icon)
