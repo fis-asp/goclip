@@ -14,10 +14,7 @@ What problem would this feature solve?
 Describe the solution you’d like (UI/behavior).
 
 ## Use Case
-When and how would you use it?
-
-## Alternatives
-Any alternatives you tried or considered?
+When and/or how would you use it?
 
 ## Extra
 Mockups/screenshots (optional): …
