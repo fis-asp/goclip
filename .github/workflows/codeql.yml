@@ -1,0 +1,91 @@
+name: "CodeQL Advanced"
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }} - ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - language: actions
+          os: ubuntu-latest
+          build-mode: none
+        - language: go
+          os: windows-latest
+          build-mode: manual
+        - language: go
+          os: macos-latest
+          build-mode: manual
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      if: matrix.language == 'go'
+      uses: actions/setup-go@v5
+      with:
+        go-version: "1.22.x"
+        cache: true
+
+    - name: Install MSYS2 (MinGW-w64) for CGO on Windows
+      if: matrix.language == 'go' && matrix.os == 'windows-latest'
+      uses: msys2/setup-msys2@v2
+      with:
+        update: true
+        msystem: MINGW64
+        install: >-
+          mingw-w64-x86_64-gcc
+          mingw-w64-x86_64-pkg-config
+
+    - name: Add MinGW to PATH (Windows)
+      if: matrix.language == 'go' && matrix.os == 'windows-latest'
+      shell: pwsh
+      run: echo "C:\msys64\mingw64\bin" >> $Env:GITHUB_PATH
+
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v4
+      with:
+        languages: ${{ matrix.language }}
+        build-mode: ${{ matrix.build-mode }}
+
+    - name: Run manual build steps (Windows)
+      if: matrix.language == 'go' && matrix.os == 'windows-latest'
+      shell: pwsh
+      env:
+        CGO_ENABLED: 1
+        GOOS: windows
+        GOARCH: amd64
+        CC: x86_64-w64-mingw32-gcc
+      run: |
+        go mod download
+        go build -o dist/goclip.exe .
+
+    - name: Run manual build steps (macOS)
+      if: matrix.language == 'go' && matrix.os == 'macos-latest'
+      shell: bash
+      env:
+        CGO_ENABLED: 1
+        GOOS: darwin
+        GOARCH: arm64
+      run: |
+        go mod download
+        go build -o dist/goclip-darwin .
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v4
+      with:
+        category: "/language:${{matrix.language}}"
