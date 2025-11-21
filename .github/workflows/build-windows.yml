@@ -23,23 +23,12 @@ jobs:
           go-version: '1.24.x'
           cache: true
 
-      - name: Cache MSYS2
-        uses: actions/cache@v4
-        with:
-          path: C:\msys64
-          key: ${{ runner.os }}-msys2-${{ hashFiles('.github/workflows/build-windows.yml') }}
-          restore-keys: |
-            ${{ runner.os }}-msys2-
-
       - name: Install MSYS2 (MinGW-w64) for CGO
         uses: msys2/setup-msys2@v2
         with:
           release: false
           update: false
           msystem: MINGW64
-          install: >-
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-pkg-config
 
       - name: Add MinGW to PATH
         shell: pwsh
@@ -60,28 +49,17 @@ jobs:
           }
           echo "APP_VERSION=$v" >> $Env:GITHUB_ENV
 
-      - name: Go mod download
-        run: go mod download
-
-      - name: Verify icon exists
-        shell: pwsh
-        run: |
-          if (-not (Test-Path "assets/logo/app.ico")) {
-            throw "Icon not found at assets/logo/app.ico"
-          }
-
       - name: Get Go bin path
         id: go-bin
         shell: pwsh
         run: echo "path=$(go env GOPATH)\bin" >> $Env:GITHUB_OUTPUT
 
-      - name: Cache Go tools
+      - name: Cache goversioninfo
         uses: actions/cache@v4
         with:
-          path: ${{ steps.go-bin.outputs.path }}
-          key: ${{ runner.os }}-go-tools-goversioninfo
-          restore-keys: |
-            ${{ runner.os }}-go-tools-
+          path: ~/go/bin/goversioninfo.exe
+          key: ${{ runner.os }}-goversioninfo-latest
+          restore-keys: ${{ runner.os }}-goversioninfo-
 
       - name: Install goversioninfo (for embedding icon)
         shell: pwsh
