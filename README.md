@@ -36,15 +36,15 @@ Some apps and browser-embedded consoles (e.g. VMware/KVM) ignore Unicode paste o
 
 ## Features
 
-- 🖱️ **Target window selection** from a dropdown  
+- **Target window selection** from a dropdown  
   - Or click **Clear** → nothing selected means **“use last active window”** automatically.
-- ⌨️ **Layout-aware typing** using OS keyboard layouts
+- **Layout-aware typing** using OS keyboard layouts
   - **Windows**: Multiple keyboard layouts supported via `VkKeyScanExW`/`MapVirtualKeyExW` with scan codes
   - **macOS**: Uses system keyboard layout with Unicode character injection
   - **Unicode fallback** for unmappable characters.
-- 🕶️ **Modern dark-mode GUI** (Fyne)
-- ⚙️ **No install required** – single portable binary
-- 🍎 **Cross-platform** – Windows and macOS supported
+- **Modern dark-mode GUI** (Fyne)
+- **No install required** – single portable binary
+- **Cross-platform** – Windows and macOS supported
 
 ---
 
@@ -158,6 +158,17 @@ The built binary can be run directly or packaged into an `.app` bundle for distr
 
 ---
 
+## Run
+
+1. Launch **goclip** (on Windows: `goclip.exe`, on macOS: `./goclip` or double-click the app).
+2. Pick **Keyboard Layout** (Windows only - or keep "Auto (Use System)"). On macOS, the system layout is used automatically.
+3. Select a **Target Window** from the dropdown, or press **Clear** so no selection → it will use the **last active** window.
+4. Type your text in the big box.
+5. Click **Type**.  
+   goclip briefly focuses the target window and injects keystrokes.
+
+---
+
 ## GitHub Actions (preconfigured)
 
 This repo includes workflows to build and publish binaries on push and tags:
@@ -184,16 +195,18 @@ This repo includes workflows to build and publish binaries on push and tags:
 - Uploads all variants as artifacts
 - On tags (`v*`) also creates a **GitHub Release** and attaches the files
 
+
 ---
 
-## Run
+## GitLab CI/CD Pipeline
 
-1. Launch **goclip** (on Windows: `goclip.exe`, on macOS: `./goclip` or double-click the app).
-2. Pick **Keyboard Layout** (Windows only - or keep "Auto (Use System)"). On macOS, the system layout is used automatically.
-3. Select a **Target Window** from the dropdown, or press **Clear** so no selection → it will use the **last active** window.
-4. Type your text in the big box.
-5. Click **Type**.  
-   goclip briefly focuses the target window and injects keystrokes.
+This repository includes a GitLab CI/CD pipeline that automatically generates a Software Bill of Materials (SBOM) using [CycloneDX](https://github.com/CycloneDX/cyclonedx-gomod) and uploads it to the internal Dependency-Track system.
+
+### Pipeline Behavior
+
+The pipeline consists of two stages:
+1. **dependency-track-generate**: Generates SBOM from `go.mod` using CycloneDX
+2. **dependency-track-upload**: Uploads the generated SBOM to Dependency-Track
 
 ---
 

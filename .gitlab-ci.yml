@@ -1,0 +1,42 @@
+stages:
+  - dependency-track-generate
+  - dependency-track-upload
+
+# Generate SBOM using CycloneDX for Go projects
+dependency-track-generate-go:
+  stage: dependency-track-generate
+  tags:
+    - fis
+  #only:
+    #- tags
+    #- main
+  image: golang:latest
+  script:
+    # Set proxy configuration
+    - export http_proxy="$HTTP_PROXY"
+    - export https_proxy="$HTTPS_PROXY"
+    - export no_proxy="$DEPENDENCY_TRACK_HOSTNAME"
+    # Install CycloneDX gomod tool
+    - go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
+    # Generate SBOM from go.mod
+    - cyclonedx-gomod mod -json -output sbom-go.json
+  artifacts:
+    paths:
+      - sbom-go.json
+
+# Upload SBOM to Dependency-Track
+dependency-track-upload:
+  stage: dependency-track-upload
+  tags:
+    - fis
+  #only:
+    #- tags
+    #- main
+  image: golang:latest
+  script:
+    - export no_proxy="$DEPENDENCY_TRACK_HOSTNAME"
+    # Download and execute the Dependency-Track push script
+    - curl --cacert <(echo "$DEPENDENCY_TRACK_ROOT_CA") -s https://$DEPENDENCY_TRACK_HOSTNAME/v3/dependency-track.sh |
+      bash -s -- push -c "$CUSTOMER" -d "$RESPONSIBLE_DEPARTMENT" -f "$CONTACT_FIS" -k "$CONTACT_CUSTOMER" -b "sbom-go.json" -t "$TAGS"
+  dependencies:
+    - dependency-track-generate-go
