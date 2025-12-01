@@ -80,6 +80,7 @@ const (
 	vkShift   = 0x10
 	vkControl = 0x11
 	vkMenu    = 0x12
+	vkRMenu   = 0xA5
 	vkReturn  = 0x0D
 
 	mapvkVKToVSC = 0
@@ -379,6 +380,22 @@ func pressVK(vk uint16, down bool) error {
 	return err
 }
 
+func pressVKExtended(vk uint16, down bool) error {
+	flags := uint32(keyeventfExtended)
+	if !down {
+		flags |= keyeventfKeyUp
+	}
+	in := input{
+		Type: inputKeyboard,
+		Ki: keyboardInput{
+			WVK:     vk,
+			DwFlags: flags,
+		},
+	}
+	_, err := sendInputCall([]input{in})
+	return err
+}
+
 func sendScan(sc uint16, extended bool, down bool) error {
 	flags := uint32(keyeventfScancode)
 	if !down {
@@ -527,11 +544,18 @@ func sendCharPhysicalFallback(r rune, perCharDelay time.Duration) error {
 }
 
 func releaseModifiers(shift byte) {
-	if (shift & 0x04) != 0 {
-		_ = pressVK(vkMenu, false)
-	}
-	if (shift & 0x02) != 0 {
-		_ = pressVK(vkControl, false)
+	// Check if AltGr (Ctrl+Alt = 0x06)
+	if (shift & 0x06) == 0x06 {
+		// Release Right Alt (AltGr) - use VK_RMENU
+		_ = pressVKExtended(vkRMenu, false)
+	} else {
+		// Release individual modifiers
+		if (shift & 0x04) != 0 {
+			_ = pressVK(vkMenu, false)
+		}
+		if (shift & 0x02) != 0 {
+			_ = pressVK(vkControl, false)
+		}
 	}
 	if (shift & 0x01) != 0 {
 		_ = pressVK(vkShift, false)
@@ -565,14 +589,24 @@ func sendCharPhysical(r rune, hkl windows.Handle, perCharDelay time.Duration) er
 			return err
 		}
 	}
-	if (shift & 0x02) != 0 {
-		if err := pressVK(vkControl, true); err != nil {
+	// Check if AltGr is needed (Ctrl+Alt = 0x06)
+	if (shift & 0x06) == 0x06 {
+		// Use Right Alt (AltGr) - VK_RMENU with extended flag
+		if err := pressVKExtended(vkRMenu, true); err != nil {
+			releaseModifiers(shift)
 			return err
 		}
-	}
-	if (shift & 0x04) != 0 {
-		if err := pressVK(vkMenu, true); err != nil {
-			return err
+	} else {
+		// Press Ctrl and/or Alt individually if needed
+		if (shift & 0x02) != 0 {
+			if err := pressVK(vkControl, true); err != nil {
+				return err
+			}
+		}
+		if (shift & 0x04) != 0 {
+			if err := pressVK(vkMenu, true); err != nil {
+				return err
+			}
 		}
 	}
 	if err := tapScan(sc, isExtendedVK(vk)); err != nil {
