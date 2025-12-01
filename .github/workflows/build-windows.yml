@@ -2,13 +2,15 @@ name: Build goclip (Windows)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "**" ]
     tags: [ "v*" ]
     paths:
       - '**.go'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/build-windows.yml'
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
@@ -96,7 +98,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          go build -v -x -trimpath -ldflags="-H=windowsgui -s -w" -o dist/goclip-windows-amd64.exe .
+          go build -v -x -trimpath -ldflags="-H=windowsgui -s -w -X main.Version=${Env:APP_VERSION}" -o dist/goclip-windows-amd64.exe .
           Copy-Item dist/goclip-windows-amd64.exe dist/goclip-${Env:APP_VERSION}-windows-amd64.exe
 
       - name: Package zip
