@@ -1123,7 +1123,8 @@ func main() {
 	// Version label in bottom right
 	versionLabel := widget.NewLabel("v" + Version)
 	versionLabel.TextStyle = fyne.TextStyle{Italic: true}
-	footer := container.NewHBox(container.NewPadded(), versionLabel)
+	versionLabel.Alignment = fyne.TextAlignTrailing
+	footer := container.NewHBox(layout.NewSpacer(), versionLabel)
 
 	content := container.NewBorder(header, footer, nil, nil, body)
 	w.SetContent(content)
