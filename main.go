@@ -550,8 +550,8 @@ func sendCharPhysicalFallback(r rune, perCharDelay time.Duration) error {
 func releaseModifiers(shift byte) {
 	// Check if AltGr (Ctrl+Alt = 0x06)
 	if (shift & 0x06) == 0x06 {
-		// Release Right Alt (AltGr) - use VK_RMENU
-		_ = pressVKExtended(vkRMenu, false)
+		// Release Right Alt (AltGr) - scan code 0x38 with extended flag
+		_ = sendScan(0x38, true, false)
 	} else {
 		// Release individual modifiers
 		if (shift & 0x04) != 0 {
@@ -595,8 +595,8 @@ func sendCharPhysical(r rune, hkl windows.Handle, perCharDelay time.Duration) er
 	}
 	// Check if AltGr is needed (Ctrl+Alt = 0x06)
 	if (shift & 0x06) == 0x06 {
-		// Use Right Alt (AltGr) - VK_RMENU with extended flag
-		if err := pressVKExtended(vkRMenu, true); err != nil {
+		// Use Right Alt (AltGr) - scan code 0x38 with extended flag for better web console compatibility
+		if err := sendScan(0x38, true, true); err != nil {
 			releaseModifiers(shift)
 			return err
 		}
