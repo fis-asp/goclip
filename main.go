@@ -29,6 +29,9 @@ import (
 //go:embed assets/logo/app.ico
 var embeddedAppIco []byte
 
+// Version is set at build time via ldflags
+var Version = "dev"
+
 type windowInfo struct {
 	Hwnd  windows.Handle
 	Title string
@@ -77,11 +80,12 @@ const (
 	keyeventfUnicode  = 0x0004
 	keyeventfScancode = 0x0008
 
-	vkShift   = 0x10
-	vkControl = 0x11
-	vkMenu    = 0x12
-	vkRMenu   = 0xA5
-	vkReturn  = 0x0D
+	vkShift    = 0x10
+	vkControl  = 0x11
+	vkMenu     = 0x12
+	vkRControl = 0xA3
+	vkRMenu    = 0xA5
+	vkReturn   = 0x0D
 
 	mapvkVKToVSC = 0
 
@@ -1116,7 +1120,12 @@ func main() {
 		status,
 	)
 
-	content := container.NewBorder(header, nil, nil, nil, body)
+	// Version label in bottom right
+	versionLabel := widget.NewLabel("v" + Version)
+	versionLabel.TextStyle = fyne.TextStyle{Italic: true}
+	footer := container.NewHBox(container.NewPadded(), versionLabel)
+
+	content := container.NewBorder(header, footer, nil, nil, body)
 	w.SetContent(content)
 
 	updateDelayLabel()

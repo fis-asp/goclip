@@ -56,11 +56,11 @@ jobs:
       - name: Build goclip (macOS arm64)
         run: |
           mkdir -p dist
-          GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/goclip-darwin-arm64 .
+          GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.Version=${APP_VERSION}" -o dist/goclip-darwin-arm64 .
 
       - name: Build goclip (macOS amd64)
         run: |
-          GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/goclip-darwin-amd64 .
+          GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.Version=${APP_VERSION}" -o dist/goclip-darwin-amd64 .
 
       - name: Create universal binary
         run: |
