@@ -2,13 +2,15 @@ name: Build goclip (Windows)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "**" ]
     tags: [ "v*" ]
     paths:
       - '**.go'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/build-windows.yml'
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
