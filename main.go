@@ -1399,7 +1399,7 @@ func main() {
 	textToTypeLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
 	// Version label + languageselector in bottom right
-	versionLabel := widget.NewLabel("v" + Version)
+	versionLabel := widget.NewLabel(Version)
 	versionLabel.TextStyle = fyne.TextStyle{Italic: true}
 	versionLabel.Alignment = fyne.TextAlignTrailing
 	languageHeadingLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
