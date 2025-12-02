@@ -43,6 +43,7 @@ Some apps and browser-embedded consoles (e.g. VMware/KVM) ignore Unicode paste o
   - **macOS**: Uses system keyboard layout with Unicode character injection
   - **Unicode fallback** for unmappable characters.
 - **Modern dark-mode GUI** (Fyne)
+- **Localized UI** – auto-detects your OS language with an in-app dropdown to switch (currently English & German)
 - **No install required** – single portable binary
 - **Cross-platform** – Windows and macOS supported
 
