@@ -232,6 +232,7 @@ var (
 	procLoadKeyboardLayoutW      = user32.NewProc("LoadKeyboardLayoutW")
 	procGetKeyboardLayout        = user32.NewProc("GetKeyboardLayout")
 	procGetWindowThreadProcessId = user32.NewProc("GetWindowThreadProcessId")
+	procGetForegroundWindow      = user32.NewProc("GetForegroundWindow")
 
 	procQueryFullProcessImageNameW = kernel32.NewProc("QueryFullProcessImageNameW")
 )
@@ -365,6 +366,11 @@ func stopForegroundWatcher() {
 		foregroundEventHook = 0
 	}
 	foregroundCallbackRef = 0
+}
+
+func getForegroundWindow() windows.Handle {
+	r, _, _ := procGetForegroundWindow.Call()
+	return windows.Handle(r)
 }
 
 func isWindowVisible(hwnd windows.Handle) bool {
@@ -1191,6 +1197,13 @@ func main() {
 		return v
 	}
 
+	// focus-change abort flag and checkbox
+	abortOnFocusChange := true
+	abortFocusCheck := widget.NewCheck("Abort on focus change", func(b bool) {
+		abortOnFocusChange = b
+	})
+	abortFocusCheck.SetChecked(true)
+
 	var typeBtn *widget.Button
 	var typeClipboardBtn *widget.Button
 	var stopBtn *widget.Button
@@ -1261,8 +1274,22 @@ func main() {
 		statusCtrl.Set(statusKeyTyping)
 
 		go func(hwnd windows.Handle, curTitle string, txt string, perChar time.Duration) {
-			err := sendText(txt, layoutSelect.Selected, perChar, shouldStop)
-			canceled := shouldStop()
+			// stop on user cancel or focus change (if enabled)
+			shouldStopWithFocus := func() bool {
+				if shouldStop() {
+					return true
+				}
+				if abortOnFocusChange {
+					current := getForegroundWindow()
+					if current != 0 && current != hwnd {
+						return true
+					}
+				}
+				return false
+			}
+
+			err := sendText(txt, layoutSelect.Selected, perChar, shouldStopWithFocus)
+			canceled := shouldStopWithFocus()
 
 			title := strings.TrimSpace(getWindowText(hwnd))
 			if title == "" {
@@ -1325,8 +1352,22 @@ func main() {
 		statusCtrl.Set(statusKeyTypingClipboard)
 
 		go func(hwnd windows.Handle, curTitle string, txt string, perChar time.Duration) {
-			err := sendText(txt, layoutSelect.Selected, perChar, shouldStop)
-			canceled := shouldStop()
+			// stop on user cancel or focus change (if enabled)
+			shouldStopWithFocus := func() bool {
+				if shouldStop() {
+					return true
+				}
+				if abortOnFocusChange {
+					current := getForegroundWindow()
+					if current != 0 && current != hwnd {
+						return true
+					}
+				}
+				return false
+			}
+
+			err := sendText(txt, layoutSelect.Selected, perChar, shouldStopWithFocus)
+			canceled := shouldStopWithFocus()
 
 			title := strings.TrimSpace(getWindowText(hwnd))
 			if title == "" {
@@ -1402,7 +1443,7 @@ func main() {
 	)
 
 	//bottom/footer section
-	//bottom left: delay label + action buttons + status
+	//bottom left: delay label + checkbox + action buttons + status
 	bottom_left := container.NewVBox(
 		delayLabel,
 		actionContainer,
@@ -1410,6 +1451,7 @@ func main() {
 	)
 	// bottom right: language selector + version
 	bottom_right := container.NewVBox(
+		abortFocusCheck,
 		languageHeadingLabel,
 		languageSelect,
 		versionLabel,
