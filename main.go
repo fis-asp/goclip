@@ -15,11 +15,12 @@ import (
 	// #include <windows.h>
 	"C"
 
+	"goclip/localization"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"golang.org/x/sys/windows"
@@ -29,6 +30,167 @@ import (
 
 //go:embed assets/logo/app.ico
 var embeddedAppIco []byte
+
+type statusKey string
+
+const (
+	statusKeyReady                statusKey = "ready"
+	statusKeySelectionCleared     statusKey = "selectionCleared"
+	statusKeyFoundWindows         statusKey = "foundWindows"
+	statusKeyWatcherWarning       statusKey = "watcherWarning"
+	statusKeyWindowUnavailable    statusKey = "windowUnavailable"
+	statusKeyNoWindow             statusKey = "noWindow"
+	statusKeyNothingToType        statusKey = "nothingToType"
+	statusKeyTyping               statusKey = "typing"
+	statusKeyStopping             statusKey = "stopping"
+	statusKeyTypingStopped        statusKey = "typingStopped"
+	statusKeyTypingError          statusKey = "typingError"
+	statusKeyTypedTo              statusKey = "typedTo"
+	statusKeyClipboardEmpty       statusKey = "clipboardEmpty"
+	statusKeyTypingClipboard      statusKey = "typingClipboard"
+	statusKeyTypingClipboardError statusKey = "typingClipboardError"
+	statusKeyTypedClipboard       statusKey = "typedClipboard"
+)
+
+type statusMessage struct {
+	key  statusKey
+	args []any
+}
+
+type statusController struct {
+	label *widget.Label
+	mu    sync.Mutex
+	last  statusMessage
+}
+
+func newStatusController(label *widget.Label) *statusController {
+	return &statusController{
+		label: label,
+		last:  statusMessage{key: statusKeyReady},
+	}
+}
+
+func (sc *statusController) Set(key statusKey, args ...any) {
+	sc.mu.Lock()
+	sc.last = statusMessage{key: key, args: args}
+	sc.mu.Unlock()
+	sc.renderAsync()
+}
+
+func (sc *statusController) Refresh() {
+	sc.mu.Lock()
+	msg := sc.last
+	sc.mu.Unlock()
+	sc.label.SetText(renderStatusText(msg, getCurrentLabelSet()))
+}
+
+func (sc *statusController) renderAsync() {
+	sc.mu.Lock()
+	msg := sc.last
+	sc.mu.Unlock()
+	labels := getCurrentLabelSet()
+	text := renderStatusText(msg, labels)
+	fyne.Do(func() {
+		sc.label.SetText(text)
+	})
+}
+
+func renderStatusText(msg statusMessage, labels localization.LabelSet) string {
+	switch msg.key {
+	case statusKeyReady:
+		return labels.StatusReady
+	case statusKeySelectionCleared:
+		return labels.StatusSelectionCleared
+	case statusKeyFoundWindows:
+		return fmt.Sprintf(labels.FoundWindowsFormat, statusArgInt(msg.args))
+	case statusKeyWatcherWarning:
+		return fmt.Sprintf(labels.StatusWatcherWarningFormat, statusArgString(msg.args))
+	case statusKeyWindowUnavailable:
+		return labels.StatusWindowUnavailable
+	case statusKeyNoWindow:
+		return labels.StatusNoWindow
+	case statusKeyNothingToType:
+		return labels.StatusNothingToType
+	case statusKeyTyping:
+		return labels.StatusTyping
+	case statusKeyStopping:
+		return labels.StatusStopping
+	case statusKeyTypingStopped:
+		return labels.StatusTypingStopped
+	case statusKeyTypingError:
+		return fmt.Sprintf(labels.StatusTypingErrorFormat, statusArgString(msg.args))
+	case statusKeyTypedTo:
+		return fmt.Sprintf(labels.StatusTypedToFormat, statusArgString(msg.args))
+	case statusKeyClipboardEmpty:
+		return labels.StatusClipboardEmpty
+	case statusKeyTypingClipboard:
+		return labels.StatusTypingClipboard
+	case statusKeyTypingClipboardError:
+		return fmt.Sprintf(labels.StatusTypingClipboardErrorFormat, statusArgString(msg.args))
+	case statusKeyTypedClipboard:
+		return fmt.Sprintf(labels.StatusTypedClipboardFormat, statusArgString(msg.args))
+	default:
+		return labels.StatusReady
+	}
+}
+
+func statusArgInt(args []any) int {
+	if len(args) == 0 {
+		return 0
+	}
+	switch v := args[0].(type) {
+	case int:
+		return v
+	case int32:
+		return int(v)
+	case int64:
+		return int(v)
+	default:
+		return 0
+	}
+}
+
+func statusArgString(args []any) string {
+	if len(args) == 0 {
+		return ""
+	}
+	return fmt.Sprint(args[0])
+}
+
+var (
+	labelSetMu      sync.RWMutex
+	currentLabelSet localization.LabelSet
+)
+
+func setCurrentLabelSet(ls localization.LabelSet) {
+	labelSetMu.Lock()
+	currentLabelSet = ls
+	labelSetMu.Unlock()
+}
+
+func getCurrentLabelSet() localization.LabelSet {
+	labelSetMu.RLock()
+	defer labelSetMu.RUnlock()
+	return currentLabelSet
+}
+
+type speedOptionID string
+
+const (
+	speedOptionDefault   speedOptionID = "default"
+	speedOptionMedium    speedOptionID = "medium"
+	speedOptionSlow      speedOptionID = "slow"
+	speedOptionSuperSlow speedOptionID = "superSlow"
+	speedOptionCustom    speedOptionID = "custom"
+)
+
+var speedOptionOrder = []speedOptionID{
+	speedOptionDefault,
+	speedOptionMedium,
+	speedOptionSlow,
+	speedOptionSuperSlow,
+	speedOptionCustom,
+}
 
 // Version is set at build time via ldflags
 var Version = "dev"
@@ -70,6 +232,7 @@ var (
 	procLoadKeyboardLayoutW      = user32.NewProc("LoadKeyboardLayoutW")
 	procGetKeyboardLayout        = user32.NewProc("GetKeyboardLayout")
 	procGetWindowThreadProcessId = user32.NewProc("GetWindowThreadProcessId")
+	procGetForegroundWindow      = user32.NewProc("GetForegroundWindow")
 
 	procQueryFullProcessImageNameW = kernel32.NewProc("QueryFullProcessImageNameW")
 )
@@ -203,6 +366,11 @@ func stopForegroundWatcher() {
 		foregroundEventHook = 0
 	}
 	foregroundCallbackRef = 0
+}
+
+func getForegroundWindow() windows.Handle {
+	r, _, _ := procGetForegroundWindow.Call()
+	return windows.Handle(r)
 }
 
 func isWindowVisible(hwnd windows.Handle) bool {
@@ -675,6 +843,14 @@ func loadAppIcon() fyne.Resource {
 }
 
 func main() {
+	systemLanguageCode := localization.DetectSystemLanguage()
+	setCurrentLabelSet(localization.Labels(systemLanguageCode))
+	selectedLanguageCode := ""
+	languageMetas := localization.SupportedLanguages()
+
+	var applyLocalization func(localization.LabelSet)
+	var applyLanguageSelection func()
+
 	myApp := app.New()
 	myApp.Settings().SetTheme(theme.DarkTheme())
 
@@ -697,7 +873,6 @@ func main() {
 
 	// --- Input field with Hide/Show (eye) toggle ---
 	inputEntry := widget.NewMultiLineEntry()
-	inputEntry.SetPlaceHolder("Type here…")
 	inputEntry.Wrapping = fyne.TextWrapWord
 
 	masked := false
@@ -716,8 +891,9 @@ func main() {
 
 	inputRow := container.NewBorder(nil, nil, nil, eyeBtn, inputEntry)
 
-	status := widget.NewLabel("Ready.")
-	status.Wrapping = fyne.TextWrapWord
+	statusLabel := widget.NewLabel("")
+	statusLabel.Wrapping = fyne.TextWrapWord
+	statusCtrl := newStatusController(statusLabel)
 
 	layoutSelect := widget.NewSelect([]string{
 		"Auto (Use System)",
@@ -751,24 +927,68 @@ func main() {
 	}, nil)
 	layoutSelect.Selected = "Auto (Use System)"
 
+	languageSelect := widget.NewSelect([]string{}, nil)
+	languageLabelToCode := make(map[string]string)
+	languageSelectUpdating := false
+	languageNativeName := func(code string) string {
+		for _, meta := range languageMetas {
+			if meta.Code == code {
+				return meta.NativeName
+			}
+		}
+		return ""
+	}
+
+	languageSelect.OnChanged = func(label string) {
+		if languageSelectUpdating {
+			return
+		}
+		code, ok := languageLabelToCode[label]
+		if !ok {
+			return
+		}
+		if code == selectedLanguageCode {
+			return
+		}
+		selectedLanguageCode = code
+		applyLanguageSelection()
+	}
+
+	refreshLanguageSelectOptions := func(labels localization.LabelSet) {
+		languageSelectUpdating = true
+		autoLabel := labels.LanguageAutoOption
+		options := make([]string, 0, len(languageMetas)+1)
+		languageLabelToCode = map[string]string{autoLabel: ""}
+		options = append(options, autoLabel)
+		for _, meta := range languageMetas {
+			options = append(options, meta.NativeName)
+			languageLabelToCode[meta.NativeName] = meta.Code
+		}
+		selectedLabel := autoLabel
+		if selectedLanguageCode != "" {
+			if native := languageNativeName(selectedLanguageCode); native != "" {
+				selectedLabel = native
+			}
+		}
+		languageSelect.Options = options
+		languageSelect.SetSelected(selectedLabel)
+		languageSelectUpdating = false
+	}
+
 	// --- Typing speed controls (dropdown + optional custom ms field) ---
-	speedSelect := widget.NewSelect([]string{
-		"Default (Auto)",
-		"Medium (50 ms)",
-		"Slow (100 ms)",
-		"Super Slow (250 ms)",
-		"Custom",
-	}, nil)
-	speedSelect.Selected = "Default (Auto)"
+	speedSelect := widget.NewSelect([]string{}, nil)
+	currentSpeedOption := speedOptionDefault
+	speedLabelToID := make(map[string]speedOptionID)
+	speedIDToLabel := make(map[speedOptionID]string)
+	speedSelectUpdating := false
 
 	customMsEntry := widget.NewEntry()
-	customMsEntry.SetPlaceHolder("ms per char")
-	customMsEntry.Hide() // start hidden unless Custom is selected
+	customMsEntry.Hide()
 
 	// Dynamic per-character delay selection
 	getPerCharDelay := func(text string) time.Duration {
-		switch speedSelect.Selected {
-		case "Default (Auto)":
+		switch currentSpeedOption {
+		case speedOptionDefault:
 			runeCount := 0
 			lines := 1
 			for _, ch := range text {
@@ -778,38 +998,30 @@ func main() {
 				}
 			}
 
-			// For very short snippets, no delay
 			if runeCount <= 200 && lines <= 5 {
 				return 0
 			}
 
-			// Base delay from line count (more lines -> more delay)
 			msByLines := lines
-
-			// Additional delay from character count (large blocks with few newlines)
-			msByChars := runeCount / 200 // 200 chars per 1 ms
-
+			msByChars := runeCount / 200
 			ms := msByLines
 			if msByChars > ms {
 				ms = msByChars
 			}
-
 			if ms < 10 {
 				ms = 10
 			}
 			if ms > 50 {
 				ms = 50
 			}
-
 			return time.Duration(ms) * time.Millisecond
-
-		case "Medium (50 ms)":
+		case speedOptionMedium:
 			return 50 * time.Millisecond
-		case "Slow (100 ms)":
+		case speedOptionSlow:
 			return 100 * time.Millisecond
-		case "Super Slow (250 ms)":
+		case speedOptionSuperSlow:
 			return 250 * time.Millisecond
-		case "Custom":
+		case speedOptionCustom:
 			v := strings.TrimSpace(customMsEntry.Text)
 			if v == "" {
 				return 0
@@ -831,22 +1043,32 @@ func main() {
 		}
 	}
 
-	// Display for current delay (only shown for Default (Auto))
-	delayLabel := widget.NewLabel("Per-character delay: 0 ms")
+	delayLabel := widget.NewLabel("")
 
 	updateDelayLabel := func() {
-		if speedSelect.Selected != "Default (Auto)" {
+		if currentSpeedOption != speedOptionDefault {
 			delayLabel.Hide()
 			return
 		}
 		delayLabel.Show()
 		d := getPerCharDelay(inputEntry.Text)
-		ms := d.Milliseconds()
-		delayLabel.SetText(fmt.Sprintf("Per-character delay: %d ms", ms))
+		labels := getCurrentLabelSet()
+		delayLabel.SetText(fmt.Sprintf(labels.DelayLabelFormat, d.Milliseconds()))
 	}
 
-	speedSelect.OnChanged = func(s string) {
-		if s == "Custom" {
+	speedSelect.OnChanged = func(label string) {
+		if speedSelectUpdating {
+			return
+		}
+		id, ok := speedLabelToID[label]
+		if !ok {
+			id = speedOptionDefault
+		}
+		if currentSpeedOption == id {
+			return
+		}
+		currentSpeedOption = id
+		if id == speedOptionCustom {
 			customMsEntry.Show()
 		} else {
 			customMsEntry.Hide()
@@ -854,12 +1076,45 @@ func main() {
 		updateDelayLabel()
 	}
 
-	customMsEntry.OnChanged = func(s string) {
+	customMsEntry.OnChanged = func(string) {
 		updateDelayLabel()
 	}
 
-	inputEntry.OnChanged = func(s string) {
+	inputEntry.OnChanged = func(string) {
 		updateDelayLabel()
+	}
+
+	refreshSpeedSelectOptions := func(labels localization.LabelSet) {
+		speedSelectUpdating = true
+		speedIDToLabel = map[speedOptionID]string{
+			speedOptionDefault:   labels.SpeedDefault,
+			speedOptionMedium:    labels.SpeedMedium,
+			speedOptionSlow:      labels.SpeedSlow,
+			speedOptionSuperSlow: labels.SpeedSuperSlow,
+			speedOptionCustom:    labels.SpeedCustom,
+		}
+		speedLabelToID = make(map[string]speedOptionID, len(speedIDToLabel))
+		options := make([]string, 0, len(speedOptionOrder))
+		for _, id := range speedOptionOrder {
+			label := speedIDToLabel[id]
+			options = append(options, label)
+			speedLabelToID[label] = id
+		}
+		speedSelect.Options = options
+		targetID := currentSpeedOption
+		if _, ok := speedIDToLabel[targetID]; !ok {
+			targetID = speedOptionDefault
+			currentSpeedOption = targetID
+		}
+		if label, ok := speedIDToLabel[targetID]; ok {
+			speedSelect.SetSelected(label)
+		}
+		if currentSpeedOption == speedOptionCustom {
+			customMsEntry.Show()
+		} else {
+			customMsEntry.Hide()
+		}
+		speedSelectUpdating = false
 	}
 
 	winOptions := []string{}
@@ -867,18 +1122,27 @@ func main() {
 
 	var laMu sync.RWMutex
 	lastActiveHandle := windows.Handle(0)
-	lastActiveTitle := "(none)"
+	lastActiveTitle := ""
 	lastActiveText := binding.NewString()
-	_ = lastActiveText.Set("Last active: (none)")
+	updateLastActiveLabel := func() {
+		labels := getCurrentLabelSet()
+		laMu.RLock()
+		title := strings.TrimSpace(lastActiveTitle)
+		laMu.RUnlock()
+		if title == "" {
+			title = labels.LastActiveNone
+		}
+		_ = lastActiveText.Set(fmt.Sprintf(labels.LastActiveFormat, title))
+	}
+	updateLastActiveLabel()
 	lastActiveLabel := widget.NewLabelWithData(lastActiveText)
 
 	windowSelect := widget.NewSelect(winOptions, nil)
-	windowSelect.PlaceHolder = "None (use last active)"
 
-	clearBtn := widget.NewButton("Clear", func() {
+	clearBtn := widget.NewButton("", func() {
 		windowSelect.Selected = ""
 		windowSelect.Refresh()
-		status.SetText("Selection cleared → using last active window.")
+		statusCtrl.Set(statusKeySelectionCleared)
 	})
 
 	refreshWindows := func() {
@@ -893,10 +1157,10 @@ func main() {
 		}
 		windowSelect.Options = winOptions
 		windowSelect.Refresh()
-		status.SetText(fmt.Sprintf("Found %d windows.", len(wins)))
+		statusCtrl.Set(statusKeyFoundWindows, len(wins))
 	}
 
-	refreshBtn := widget.NewButton("Refresh windows", refreshWindows)
+	refreshBtn := widget.NewButton("", refreshWindows)
 
 	// Start event-driven watcher of foreground windows
 	err := startForegroundWatcher(selfExeLower, func(hwnd windows.Handle, title string) {
@@ -907,10 +1171,10 @@ func main() {
 		lastActiveTitle = t
 		laMu.Unlock()
 
-		_ = lastActiveText.Set("Last active: " + t)
+		updateLastActiveLabel()
 	})
 	if err != nil {
-		status.SetText("Warning: foreground watcher failed, falling back: " + err.Error())
+		statusCtrl.Set(statusKeyWatcherWarning, err.Error())
 	}
 
 	// Ensure cleanup when main exits
@@ -932,6 +1196,13 @@ func main() {
 		typingMu.Unlock()
 		return v
 	}
+
+	// focus-change abort flag and checkbox
+	abortOnFocusChange := true
+	abortFocusCheck := widget.NewCheck("Abort on focus change", func(b bool) {
+		abortOnFocusChange = b
+	})
+	abortFocusCheck.SetChecked(true)
 
 	var typeBtn *widget.Button
 	var typeClipboardBtn *widget.Button
@@ -956,14 +1227,14 @@ func main() {
 	}
 
 	// Stop button (shown while typing)
-	stopBtn = widget.NewButton("Stop", func() {
+	stopBtn = widget.NewButton("", func() {
 		setStopRequested(true)
-		status.SetText("Stopping typing...")
+		statusCtrl.Set(statusKeyStopping)
 	})
 	stopBtn.Importance = widget.DangerImportance
 
 	// --- Type Button ---
-	typeBtn = widget.NewButton("Type", func() {
+	typeBtn = widget.NewButton("", func() {
 		selected := windowSelect.Selected
 
 		laMu.RLock()
@@ -978,13 +1249,13 @@ func main() {
 			var ok bool
 			hwnd, ok = winMap[selected]
 			if !ok || hwnd == 0 {
-				status.SetText("Selected window is no longer available.")
+				statusCtrl.Set(statusKeyWindowUnavailable)
 				return
 			}
 		}
 
 		if hwnd == 0 {
-			status.SetText("No window focused yet. Click a window then come back.")
+			statusCtrl.Set(statusKeyNoWindow)
 			return
 		}
 
@@ -993,18 +1264,32 @@ func main() {
 
 		txt := inputEntry.Text
 		if txt == "" {
-			status.SetText("Nothing to type.")
+			statusCtrl.Set(statusKeyNothingToType)
 			return
 		}
 
 		perChar := getPerCharDelay(txt)
 		setStopRequested(false)
 		setTypingUI(true)
-		status.SetText("Typing...")
+		statusCtrl.Set(statusKeyTyping)
 
 		go func(hwnd windows.Handle, curTitle string, txt string, perChar time.Duration) {
-			err := sendText(txt, layoutSelect.Selected, perChar, shouldStop)
-			canceled := shouldStop()
+			// stop on user cancel or focus change (if enabled)
+			shouldStopWithFocus := func() bool {
+				if shouldStop() {
+					return true
+				}
+				if abortOnFocusChange {
+					current := getForegroundWindow()
+					if current != 0 && current != hwnd {
+						return true
+					}
+				}
+				return false
+			}
+
+			err := sendText(txt, layoutSelect.Selected, perChar, shouldStopWithFocus)
+			canceled := shouldStopWithFocus()
 
 			title := strings.TrimSpace(getWindowText(hwnd))
 			if title == "" {
@@ -1014,11 +1299,11 @@ func main() {
 
 			fyne.Do(func() {
 				if canceled {
-					status.SetText("Typing stopped by user.")
+					statusCtrl.Set(statusKeyTypingStopped)
 				} else if err != nil {
-					status.SetText("Error typing: " + err.Error())
+					statusCtrl.Set(statusKeyTypingError, err.Error())
 				} else {
-					status.SetText("Typed to: " + title)
+					statusCtrl.Set(statusKeyTypedTo, title)
 				}
 				setTypingUI(false)
 				setStopRequested(false)
@@ -1027,7 +1312,7 @@ func main() {
 	})
 
 	// --- Type Clipboard Button ---
-	typeClipboardBtn = widget.NewButton("Type Clipboard", func() {
+	typeClipboardBtn = widget.NewButton("", func() {
 		selected := windowSelect.Selected
 
 		laMu.RLock()
@@ -1042,13 +1327,13 @@ func main() {
 			var ok bool
 			hwnd, ok = winMap[selected]
 			if !ok || hwnd == 0 {
-				status.SetText("Selected window is no longer available.")
+				statusCtrl.Set(statusKeyWindowUnavailable)
 				return
 			}
 		}
 
 		if hwnd == 0 {
-			status.SetText("No window focused yet. Click a window then come back.")
+			statusCtrl.Set(statusKeyNoWindow)
 			return
 		}
 
@@ -1057,18 +1342,32 @@ func main() {
 
 		txt := w.Clipboard().Content()
 		if txt == "" {
-			status.SetText("Clipboard is empty.")
+			statusCtrl.Set(statusKeyClipboardEmpty)
 			return
 		}
 
 		perChar := getPerCharDelay(txt)
 		setStopRequested(false)
 		setTypingUI(true)
-		status.SetText("Typing clipboard...")
+		statusCtrl.Set(statusKeyTypingClipboard)
 
 		go func(hwnd windows.Handle, curTitle string, txt string, perChar time.Duration) {
-			err := sendText(txt, layoutSelect.Selected, perChar, shouldStop)
-			canceled := shouldStop()
+			// stop on user cancel or focus change (if enabled)
+			shouldStopWithFocus := func() bool {
+				if shouldStop() {
+					return true
+				}
+				if abortOnFocusChange {
+					current := getForegroundWindow()
+					if current != 0 && current != hwnd {
+						return true
+					}
+				}
+				return false
+			}
+
+			err := sendText(txt, layoutSelect.Selected, perChar, shouldStopWithFocus)
+			canceled := shouldStopWithFocus()
 
 			title := strings.TrimSpace(getWindowText(hwnd))
 			if title == "" {
@@ -1078,11 +1377,11 @@ func main() {
 
 			fyne.Do(func() {
 				if canceled {
-					status.SetText("Typing stopped by user.")
+					statusCtrl.Set(statusKeyTypingStopped)
 				} else if err != nil {
-					status.SetText("Error typing clipboard: " + err.Error())
+					statusCtrl.Set(statusKeyTypingClipboardError, err.Error())
 				} else {
-					status.SetText("Typed clipboard to: " + title)
+					statusCtrl.Set(statusKeyTypedClipboard, title)
 				}
 				setTypingUI(false)
 				setStopRequested(false)
@@ -1094,41 +1393,116 @@ func main() {
 	actionContainer = container.NewHBox(typeBtn, typeClipboardBtn)
 
 	// Left side: window selector + buttons
+	targetWindowLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	keyboardLayoutLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	typingSpeedLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	textToTypeLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+
+	// Version label + languageselector in bottom right
+	versionLabel := widget.NewLabel("v" + Version)
+	versionLabel.TextStyle = fyne.TextStyle{Italic: true}
+	versionLabel.Alignment = fyne.TextAlignTrailing
+	languageHeadingLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+
+	// top/header section
+	// left side: window selector + buttons + last active
 	left := container.NewVBox(
-		widget.NewLabelWithStyle("Target Window", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		targetWindowLabel,
 		container.NewHBox(windowSelect, clearBtn),
 		refreshBtn,
 		lastActiveLabel,
 	)
-
-	// Right side: layout selector + typing speed controls
+	// right side: layout + speed + custom ms
 	right := container.NewVBox(
-		widget.NewLabelWithStyle("Keyboard Layout", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		keyboardLayoutLabel,
 		layoutSelect,
 		widget.NewSeparator(),
-		widget.NewLabelWithStyle("Typing Speed", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		typingSpeedLabel,
 		speedSelect,
-		customMsEntry, // hidden unless Custom is selected
+		customMsEntry,
 	)
-
+	// assemble header
 	header := container.NewBorder(nil, nil, left, right, nil)
 
-	body := container.NewVBox(
-		widget.NewLabelWithStyle("Text to type", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+	// body/center section
+	// center: text to type + input area
+	body_center := container.NewBorder(
+		textToTypeLabel,
+		nil,
+		nil,
+		nil,
 		inputRow,
-		delayLabel,
-		actionContainer,
-		status,
+	)
+	// assemble body
+	body := container.NewBorder(
+		nil,
+		nil,
+		nil,
+		nil,
+		body_center,
 	)
 
-	// Version label in bottom right
-	versionLabel := widget.NewLabel("v" + Version)
-	versionLabel.TextStyle = fyne.TextStyle{Italic: true}
-	versionLabel.Alignment = fyne.TextAlignTrailing
-	footer := container.NewHBox(layout.NewSpacer(), versionLabel)
+	//bottom/footer section
+	//bottom left: delay label + checkbox + action buttons + status
+	bottom_left := container.NewVBox(
+		delayLabel,
+		actionContainer,
+		statusLabel,
+	)
+	// bottom right: language selector + version
+	bottom_right := container.NewVBox(
+		abortFocusCheck,
+		languageHeadingLabel,
+		languageSelect,
+		versionLabel,
+	)
+	// assemble footer
+	footer := container.NewBorder(
+		nil,
+		nil,
+		bottom_left,
+		bottom_right,
+		nil,
+	)
 
 	content := container.NewBorder(header, footer, nil, nil, body)
 	w.SetContent(content)
+
+	applyLocalization = func(labels localization.LabelSet) {
+		w.SetTitle(labels.AppTitle)
+		inputEntry.SetPlaceHolder(labels.InputPlaceholder)
+		targetWindowLabel.SetText(labels.TargetWindowHeading)
+		keyboardLayoutLabel.SetText(labels.KeyboardLayoutHeading)
+		typingSpeedLabel.SetText(labels.TypingSpeedHeading)
+		textToTypeLabel.SetText(labels.TextToTypeHeading)
+		languageHeadingLabel.SetText(labels.LanguageHeading)
+		clearBtn.SetText(labels.ClearButton)
+		refreshBtn.SetText(labels.RefreshWindowsButton)
+		typeBtn.SetText(labels.TypeButton)
+		typeClipboardBtn.SetText(labels.TypeClipboardButton)
+		stopBtn.SetText(labels.StopButton)
+		customMsEntry.SetPlaceHolder(labels.CustomMsPlaceholder)
+		windowSelect.PlaceHolder = labels.WindowPlaceholder
+		windowSelect.Refresh()
+		refreshSpeedSelectOptions(labels)
+		refreshLanguageSelectOptions(labels)
+		updateLastActiveLabel()
+		updateDelayLabel()
+		statusCtrl.Refresh()
+	}
+
+	applyLanguageSelection = func() {
+		effectiveCode := selectedLanguageCode
+		if effectiveCode == "" {
+			effectiveCode = systemLanguageCode
+		}
+		effectiveCode = localization.ResolveCode(effectiveCode)
+		labels := localization.Labels(effectiveCode)
+		setCurrentLabelSet(labels)
+		applyLocalization(labels)
+	}
+
+	applyLanguageSelection()
 
 	updateDelayLabel()
 	refreshWindows()
