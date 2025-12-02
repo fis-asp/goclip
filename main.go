@@ -1363,12 +1363,15 @@ func main() {
 	versionLabel.Alignment = fyne.TextAlignTrailing
 	languageHeadingLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
+	// top/header section
+	// left side: window selector + buttons + last active
 	left := container.NewVBox(
 		targetWindowLabel,
 		container.NewHBox(windowSelect, clearBtn),
 		refreshBtn,
 		lastActiveLabel,
 	)
+	// right side: layout + speed + custom ms
 	right := container.NewVBox(
 		keyboardLayoutLabel,
 		layoutSelect,
@@ -1377,9 +1380,11 @@ func main() {
 		speedSelect,
 		customMsEntry,
 	)
-
+	// assemble header
 	header := container.NewBorder(nil, nil, left, right, nil)
 
+	// body/center section
+	// center: text to type + input area
 	body_center := container.NewBorder(
 		textToTypeLabel,
 		nil,
@@ -1387,7 +1392,7 @@ func main() {
 		nil,
 		inputRow,
 	)
-
+	// assemble body
 	body := container.NewBorder(
 		nil,
 		nil,
@@ -1396,17 +1401,20 @@ func main() {
 		body_center,
 	)
 
+	//bottom/footer section
+	//bottom left: delay label + action buttons + status
 	bottom_left := container.NewVBox(
 		delayLabel,
 		actionContainer,
 		statusLabel,
 	)
+	// bottom right: language selector + version
 	bottom_right := container.NewVBox(
 		languageHeadingLabel,
 		languageSelect,
 		versionLabel,
 	)
-
+	// assemble footer
 	footer := container.NewBorder(
 		nil,
 		nil,
