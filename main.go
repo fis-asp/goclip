@@ -15,14 +15,14 @@ import (
 	// #include <windows.h>
 	"C"
 
+	"goclip/localization"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
-	"goclip/localization"
 	"golang.org/x/sys/windows"
 
 	_ "embed"
@@ -1356,6 +1356,11 @@ func main() {
 	keyboardLayoutLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	typingSpeedLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	textToTypeLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+
+	// Version label + languageselector in bottom right
+	versionLabel := widget.NewLabel("v" + Version)
+	versionLabel.TextStyle = fyne.TextStyle{Italic: true}
+	versionLabel.Alignment = fyne.TextAlignTrailing
 	languageHeadingLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
 	left := container.NewVBox(
@@ -1364,12 +1369,7 @@ func main() {
 		refreshBtn,
 		lastActiveLabel,
 	)
-
-	// Right side: layout selector + typing speed controls
 	right := container.NewVBox(
-		languageHeadingLabel,
-		languageSelect,
-		widget.NewSeparator(),
 		keyboardLayoutLabel,
 		layoutSelect,
 		widget.NewSeparator(),
@@ -1380,19 +1380,41 @@ func main() {
 
 	header := container.NewBorder(nil, nil, left, right, nil)
 
-	body := container.NewVBox(
+	body_center := container.NewBorder(
 		textToTypeLabel,
+		nil,
+		nil,
+		nil,
 		inputRow,
+	)
+
+	body := container.NewBorder(
+		nil,
+		nil,
+		nil,
+		nil,
+		body_center,
+	)
+
+	bottom_left := container.NewVBox(
 		delayLabel,
 		actionContainer,
 		statusLabel,
 	)
+	bottom_right := container.NewVBox(
+		languageHeadingLabel,
+		languageSelect,
+		widget.NewSeparator(),
+		versionLabel,
+	)
 
-	// Version label in bottom right
-	versionLabel := widget.NewLabel("v" + Version)
-	versionLabel.TextStyle = fyne.TextStyle{Italic: true}
-	versionLabel.Alignment = fyne.TextAlignTrailing
-	footer := container.NewHBox(layout.NewSpacer(), versionLabel)
+	footer := container.NewBorder(
+		nil,
+		nil,
+		bottom_left,
+		bottom_right,
+		nil,
+	)
 
 	content := container.NewBorder(header, footer, nil, nil, body)
 	w.SetContent(content)
