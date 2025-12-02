@@ -1404,7 +1404,6 @@ func main() {
 	bottom_right := container.NewVBox(
 		languageHeadingLabel,
 		languageSelect,
-		widget.NewSeparator(),
 		versionLabel,
 	)
 
