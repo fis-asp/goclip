@@ -21,6 +21,7 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"golang.org/x/sys/windows"
@@ -1218,6 +1219,11 @@ func main() {
 	compatibilitySettingToLabel := make(map[compatibilityModeSetting]string)
 	compatibilitySelectUpdating := false
 	compatibilityStatusLabel := widget.NewLabel("")
+	compatibilityHelpBtn := widget.NewButtonWithIcon("", theme.QuestionIcon(), func() {
+		labels := getCurrentLabelSet()
+		dialog.NewInformation(labels.CompatibilityHelpTitle, labels.CompatibilityHelpMessage, w).Show()
+	})
+	compatibilityHelpBtn.Importance = widget.LowImportance
 	var updateCompatibilityStatus func()
 
 	refreshSpeedSelectOptions := func(labels localization.LabelSet) {
@@ -1639,6 +1645,11 @@ func main() {
 		lastActiveLabel,
 	)
 	// right side: layout + speed + custom ms
+	compatibilityHeader := container.NewHBox(
+		compatibilityModeLabel,
+		compatibilityHelpBtn,
+	)
+
 	right := container.NewVBox(
 		keyboardLayoutLabel,
 		layoutSelect,
@@ -1647,7 +1658,7 @@ func main() {
 		speedSelect,
 		customMsEntry,
 		widget.NewSeparator(),
-		compatibilityModeLabel,
+		compatibilityHeader,
 		compatibilityModeSelect,
 		compatibilityStatusLabel,
 	)
