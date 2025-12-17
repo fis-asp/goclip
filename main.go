@@ -192,6 +192,20 @@ var speedOptionOrder = []speedOptionID{
 	speedOptionCustom,
 }
 
+type compatibilityModeSetting string
+
+const (
+	compatibilityModeAuto     compatibilityModeSetting = "auto"
+	compatibilityModeForceOn  compatibilityModeSetting = "forceOn"
+	compatibilityModeForceOff compatibilityModeSetting = "forceOff"
+)
+
+var compatibilityModeOrder = []compatibilityModeSetting{
+	compatibilityModeAuto,
+	compatibilityModeForceOn,
+	compatibilityModeForceOff,
+}
+
 // Version is set at build time via ldflags
 var Version = "dev"
 
@@ -268,7 +282,71 @@ var ignoredTitleSubstringsLower = []string{
 	// add more substrings if needed
 }
 
+type appCompatibilityRule struct {
+	Name            string
+	ProcessNames    []string
+	TitleSubstrings []string
+}
+
+var modifierCompatibilityRules = []appCompatibilityRule{
+	{
+		Name: "Citrix Workspace / Viewer",
+		ProcessNames: []string{
+			"wfica32.exe",
+			"wfcrun32.exe",
+			"selfservice.exe",
+			"citrixworkspace.exe",
+			"cdviewer.exe",
+			"receiver.exe",
+		},
+		TitleSubstrings: []string{
+			"citrix workspace",
+			"citrix viewer",
+			"cdviewer",
+			"virtual apps and desktops",
+		},
+	},
+	{
+		Name: "HPE iLO Integrated Remote Console",
+		ProcessNames: []string{
+			"integratedremoteconsole.exe",
+			"hpilo-integrated-rc.exe",
+			"hpilo-integrated-remote-console.exe",
+			"hpremoteconsole.exe",
+			"hpiloremoteconsole.exe",
+		},
+		TitleSubstrings: []string{
+			"integrated remote console",
+			"hpe ilo",
+			"hp ilo",
+			"ilo remote console",
+			"ilo:",
+		},
+	},
+}
+
 // ------------------------------------------------
+
+func (r appCompatibilityRule) matches(title string, exe string) bool {
+	if exe != "" {
+		for _, proc := range r.ProcessNames {
+			if exe == proc {
+				return true
+			}
+		}
+	}
+	if title != "" {
+		for _, sub := range r.TitleSubstrings {
+			if sub == "" {
+				continue
+			}
+			if strings.Contains(title, sub) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 type keyboardInput struct {
 	WVK         uint16
@@ -477,6 +555,34 @@ func shouldIgnoreWindow(hwnd windows.Handle, title string, selfExeLower string) 
 	return false
 }
 
+func matchesModifierCompatibilityWindow(hwnd windows.Handle) bool {
+	title := strings.ToLower(strings.TrimSpace(getWindowText(hwnd)))
+	exe := getWindowProcessExeBase(hwnd)
+	if title == "" && exe == "" {
+		return false
+	}
+	for _, rule := range modifierCompatibilityRules {
+		if rule.matches(title, exe) {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveModifierCompatibility(hwnd windows.Handle, setting compatibilityModeSetting) bool {
+	switch setting {
+	case compatibilityModeForceOn:
+		return true
+	case compatibilityModeForceOff:
+		return false
+	default:
+		if hwnd == 0 {
+			return false
+		}
+		return matchesModifierCompatibilityWindow(hwnd)
+	}
+}
+
 func enumWindows(selfExeLower string) []windowInfo {
 	var wins []windowInfo
 	cb := windows.NewCallback(func(h uintptr, _ uintptr) uintptr {
@@ -567,6 +673,27 @@ func pressVKExtended(vk uint16, down bool) error {
 	}
 	_, err := sendInputCall([]input{in})
 	return err
+}
+
+func pressShift(down bool, compat bool) error {
+	if compat {
+		return sendScan(0x2A, false, down)
+	}
+	return pressVK(vkShift, down)
+}
+
+func pressCtrl(down bool, compat bool) error {
+	if compat {
+		return sendScan(0x1D, false, down)
+	}
+	return pressVK(vkControl, down)
+}
+
+func pressAlt(down bool, compat bool) error {
+	if compat {
+		return sendScan(0x38, false, down)
+	}
+	return pressVK(vkMenu, down)
 }
 
 func sendScan(sc uint16, extended bool, down bool) error {
@@ -716,7 +843,7 @@ func sendCharPhysicalFallback(r rune, perCharDelay time.Duration) error {
 	return nil
 }
 
-func releaseModifiers(shift byte) {
+func releaseModifiers(shift byte, compat bool) {
 	// Check if AltGr (Ctrl+Alt = 0x06)
 	if (shift & 0x06) == 0x06 {
 		// Release Right Alt (AltGr) - scan code 0x38 with extended flag
@@ -724,14 +851,14 @@ func releaseModifiers(shift byte) {
 	} else {
 		// Release individual modifiers
 		if (shift & 0x04) != 0 {
-			_ = pressVK(vkMenu, false)
+			_ = pressAlt(false, compat)
 		}
 		if (shift & 0x02) != 0 {
-			_ = pressVK(vkControl, false)
+			_ = pressCtrl(false, compat)
 		}
 	}
 	if (shift & 0x01) != 0 {
-		_ = pressVK(vkShift, false)
+		_ = pressShift(false, compat)
 	}
 }
 
@@ -748,7 +875,7 @@ func isExtendedVK(vk uint16) bool {
 	}
 }
 
-func sendCharPhysical(r rune, hkl windows.Handle, perCharDelay time.Duration) error {
+func sendCharPhysical(r rune, hkl windows.Handle, perCharDelay time.Duration, useModifierCompat bool) error {
 	vk, shift, ok := vkKeyScanEx(r, hkl)
 	if !ok {
 		return sendCharPhysicalFallback(r, perCharDelay)
@@ -758,7 +885,7 @@ func sendCharPhysical(r rune, hkl windows.Handle, perCharDelay time.Duration) er
 		return sendCharPhysicalFallback(r, perCharDelay)
 	}
 	if (shift & 0x01) != 0 {
-		if err := pressVK(vkShift, true); err != nil {
+		if err := pressShift(true, useModifierCompat); err != nil {
 			return err
 		}
 	}
@@ -766,32 +893,33 @@ func sendCharPhysical(r rune, hkl windows.Handle, perCharDelay time.Duration) er
 	if (shift & 0x06) == 0x06 {
 		// Use Right Alt (AltGr) - scan code 0x38 with extended flag for better web console compatibility
 		if err := sendScan(0x38, true, true); err != nil {
-			releaseModifiers(shift)
+			releaseModifiers(shift, useModifierCompat)
 			return err
 		}
 	} else {
 		// Press Ctrl and/or Alt individually if needed
 		if (shift & 0x02) != 0 {
-			if err := pressVK(vkControl, true); err != nil {
+			if err := pressCtrl(true, useModifierCompat); err != nil {
 				return err
 			}
 		}
 		if (shift & 0x04) != 0 {
-			if err := pressVK(vkMenu, true); err != nil {
+			if err := pressAlt(true, useModifierCompat); err != nil {
+				releaseModifiers(shift, useModifierCompat)
 				return err
 			}
 		}
 	}
 	if err := tapScan(sc, isExtendedVK(vk)); err != nil {
-		releaseModifiers(shift)
+		releaseModifiers(shift, useModifierCompat)
 		return err
 	}
-	releaseModifiers(shift)
+	releaseModifiers(shift, useModifierCompat)
 	time.Sleep(perCharDelay)
 	return nil
 }
 
-func sendText(text string, layout string, perCharDelay time.Duration, shouldStop func() bool) error {
+func sendText(text string, layout string, perCharDelay time.Duration, useModifierCompat bool, shouldStop func() bool) error {
 	hkl := loadHKLByName(layout)
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 
@@ -809,7 +937,7 @@ func sendText(text string, layout string, perCharDelay time.Duration, shouldStop
 			continue
 		}
 
-		if err := sendCharPhysical(r, hkl, perCharDelay); err != nil {
+		if err := sendCharPhysical(r, hkl, perCharDelay, useModifierCompat); err != nil {
 			return err
 		}
 	}
@@ -1084,6 +1212,14 @@ func main() {
 		updateDelayLabel()
 	}
 
+	compatibilityModeSelect := widget.NewSelect([]string{}, nil)
+	currentCompatibilitySetting := compatibilityModeAuto
+	compatibilityLabelToSetting := make(map[string]compatibilityModeSetting)
+	compatibilitySettingToLabel := make(map[compatibilityModeSetting]string)
+	compatibilitySelectUpdating := false
+	compatibilityStatusLabel := widget.NewLabel("")
+	var updateCompatibilityStatus func()
+
 	refreshSpeedSelectOptions := func(labels localization.LabelSet) {
 		speedSelectUpdating = true
 		speedIDToLabel = map[speedOptionID]string{
@@ -1117,6 +1253,33 @@ func main() {
 		speedSelectUpdating = false
 	}
 
+	refreshCompatibilitySelectOptions := func(labels localization.LabelSet) {
+		compatibilitySelectUpdating = true
+		compatibilitySettingToLabel = map[compatibilityModeSetting]string{
+			compatibilityModeAuto:     labels.CompatibilityModeAuto,
+			compatibilityModeForceOn:  labels.CompatibilityModeOn,
+			compatibilityModeForceOff: labels.CompatibilityModeOff,
+		}
+		compatibilityLabelToSetting = make(map[string]compatibilityModeSetting, len(compatibilityModeOrder))
+		options := make([]string, 0, len(compatibilityModeOrder))
+		for _, setting := range compatibilityModeOrder {
+			label := compatibilitySettingToLabel[setting]
+			options = append(options, label)
+			compatibilityLabelToSetting[label] = setting
+		}
+		compatibilityModeSelect.Options = options
+		target := currentCompatibilitySetting
+		if _, ok := compatibilitySettingToLabel[target]; !ok {
+			target = compatibilityModeAuto
+			currentCompatibilitySetting = target
+		}
+		if label, ok := compatibilitySettingToLabel[target]; ok {
+			compatibilityModeSelect.SetSelected(label)
+		}
+		compatibilitySelectUpdating = false
+		updateCompatibilityStatus()
+	}
+
 	winOptions := []string{}
 	winMap := map[string]windows.Handle{}
 
@@ -1139,10 +1302,68 @@ func main() {
 
 	windowSelect := widget.NewSelect(winOptions, nil)
 
+	updateCompatibilityStatus = func() {
+		labels := getCurrentLabelSet()
+		text := labels.CompatibilityStatusUnknown
+
+		var hwnd windows.Handle
+		selected := windowSelect.Selected
+		if selected == "" {
+			laMu.RLock()
+			hwnd = lastActiveHandle
+			laMu.RUnlock()
+		} else {
+			if h, ok := winMap[selected]; ok {
+				hwnd = h
+			}
+		}
+
+		switch currentCompatibilitySetting {
+		case compatibilityModeForceOn:
+			text = fmt.Sprintf(labels.CompatibilityStatusFormat, labels.CompatibilityStatusActive)
+		case compatibilityModeForceOff:
+			text = fmt.Sprintf(labels.CompatibilityStatusFormat, labels.CompatibilityStatusInactive)
+		default:
+			if hwnd == 0 {
+				text = labels.CompatibilityStatusUnknown
+			} else if matchesModifierCompatibilityWindow(hwnd) {
+				text = fmt.Sprintf(labels.CompatibilityStatusFormat, labels.CompatibilityStatusActive)
+			} else {
+				text = fmt.Sprintf(labels.CompatibilityStatusFormat, labels.CompatibilityStatusInactive)
+			}
+		}
+
+		fyne.Do(func() {
+			compatibilityStatusLabel.SetText(text)
+		})
+	}
+
+	windowSelect.OnChanged = func(string) {
+		updateCompatibilityStatus()
+	}
+
+	updateCompatibilityStatus()
+
+	compatibilityModeSelect.OnChanged = func(label string) {
+		if compatibilitySelectUpdating {
+			return
+		}
+		setting, ok := compatibilityLabelToSetting[label]
+		if !ok {
+			setting = compatibilityModeAuto
+		}
+		if currentCompatibilitySetting == setting {
+			return
+		}
+		currentCompatibilitySetting = setting
+		updateCompatibilityStatus()
+	}
+
 	clearBtn := widget.NewButton("", func() {
 		windowSelect.Selected = ""
 		windowSelect.Refresh()
 		statusCtrl.Set(statusKeySelectionCleared)
+		updateCompatibilityStatus()
 	})
 
 	refreshWindows := func() {
@@ -1158,6 +1379,7 @@ func main() {
 		windowSelect.Options = winOptions
 		windowSelect.Refresh()
 		statusCtrl.Set(statusKeyFoundWindows, len(wins))
+		updateCompatibilityStatus()
 	}
 
 	refreshBtn := widget.NewButton("", refreshWindows)
@@ -1172,6 +1394,7 @@ func main() {
 		laMu.Unlock()
 
 		updateLastActiveLabel()
+		updateCompatibilityStatus()
 	})
 	if err != nil {
 		statusCtrl.Set(statusKeyWatcherWarning, err.Error())
@@ -1268,12 +1491,13 @@ func main() {
 			return
 		}
 
+		useModifierCompat := resolveModifierCompatibility(hwnd, currentCompatibilitySetting)
 		perChar := getPerCharDelay(txt)
 		setStopRequested(false)
 		setTypingUI(true)
 		statusCtrl.Set(statusKeyTyping)
 
-		go func(hwnd windows.Handle, curTitle string, txt string, perChar time.Duration) {
+		go func(hwnd windows.Handle, curTitle string, txt string, perChar time.Duration, modifierCompat bool) {
 			// stop on user cancel or focus change (if enabled)
 			shouldStopWithFocus := func() bool {
 				if shouldStop() {
@@ -1288,7 +1512,7 @@ func main() {
 				return false
 			}
 
-			err := sendText(txt, layoutSelect.Selected, perChar, shouldStopWithFocus)
+			err := sendText(txt, layoutSelect.Selected, perChar, modifierCompat, shouldStopWithFocus)
 			canceled := shouldStopWithFocus()
 
 			title := strings.TrimSpace(getWindowText(hwnd))
@@ -1308,7 +1532,7 @@ func main() {
 				setTypingUI(false)
 				setStopRequested(false)
 			})
-		}(hwnd, curTitle, txt, perChar)
+		}(hwnd, curTitle, txt, perChar, useModifierCompat)
 	})
 
 	// --- Type Clipboard Button ---
@@ -1346,12 +1570,13 @@ func main() {
 			return
 		}
 
+		useModifierCompat := resolveModifierCompatibility(hwnd, currentCompatibilitySetting)
 		perChar := getPerCharDelay(txt)
 		setStopRequested(false)
 		setTypingUI(true)
 		statusCtrl.Set(statusKeyTypingClipboard)
 
-		go func(hwnd windows.Handle, curTitle string, txt string, perChar time.Duration) {
+		go func(hwnd windows.Handle, curTitle string, txt string, perChar time.Duration, modifierCompat bool) {
 			// stop on user cancel or focus change (if enabled)
 			shouldStopWithFocus := func() bool {
 				if shouldStop() {
@@ -1366,7 +1591,7 @@ func main() {
 				return false
 			}
 
-			err := sendText(txt, layoutSelect.Selected, perChar, shouldStopWithFocus)
+			err := sendText(txt, layoutSelect.Selected, perChar, modifierCompat, shouldStopWithFocus)
 			canceled := shouldStopWithFocus()
 
 			title := strings.TrimSpace(getWindowText(hwnd))
@@ -1386,7 +1611,7 @@ func main() {
 				setTypingUI(false)
 				setStopRequested(false)
 			})
-		}(hwnd, curTitle, txt, perChar)
+		}(hwnd, curTitle, txt, perChar, useModifierCompat)
 	})
 
 	// Action container that switches between [Type, Type Clipboard] and [Stop]
@@ -1396,6 +1621,7 @@ func main() {
 	targetWindowLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	keyboardLayoutLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	typingSpeedLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	compatibilityModeLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	textToTypeLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
 	// Version label + languageselector in bottom right
@@ -1420,6 +1646,10 @@ func main() {
 		typingSpeedLabel,
 		speedSelect,
 		customMsEntry,
+		widget.NewSeparator(),
+		compatibilityModeLabel,
+		compatibilityModeSelect,
+		compatibilityStatusLabel,
 	)
 	// assemble header
 	header := container.NewBorder(nil, nil, left, right, nil)
@@ -1474,6 +1704,7 @@ func main() {
 		targetWindowLabel.SetText(labels.TargetWindowHeading)
 		keyboardLayoutLabel.SetText(labels.KeyboardLayoutHeading)
 		typingSpeedLabel.SetText(labels.TypingSpeedHeading)
+		compatibilityModeLabel.SetText(labels.CompatibilityModeHeading)
 		textToTypeLabel.SetText(labels.TextToTypeHeading)
 		languageHeadingLabel.SetText(labels.LanguageHeading)
 		clearBtn.SetText(labels.ClearButton)
@@ -1485,10 +1716,12 @@ func main() {
 		windowSelect.PlaceHolder = labels.WindowPlaceholder
 		windowSelect.Refresh()
 		refreshSpeedSelectOptions(labels)
+		refreshCompatibilitySelectOptions(labels)
 		refreshLanguageSelectOptions(labels)
 		updateLastActiveLabel()
 		updateDelayLabel()
 		statusCtrl.Refresh()
+		updateCompatibilityStatus()
 	}
 
 	applyLanguageSelection = func() {
