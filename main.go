@@ -1444,7 +1444,7 @@ func main() {
 
 	// focus-change abort flag and checkbox
 	abortOnFocusChange := true
-	abortFocusCheck := widget.NewCheck("Abort on focus change", func(b bool) {
+	abortFocusCheck := widget.NewCheck("", func(b bool) {
 		abortOnFocusChange = b
 	})
 	abortFocusCheck.SetChecked(true)
@@ -1749,6 +1749,7 @@ func main() {
 		typeBtn.SetText(labels.TypeButton)
 		typeClipboardBtn.SetText(labels.TypeClipboardButton)
 		stopBtn.SetText(labels.StopButton)
+		abortFocusCheck.SetText(labels.AbortOnFocusChange)
 		customMsEntry.SetPlaceHolder(labels.CustomMsPlaceholder)
 		windowSelect.PlaceHolder = labels.WindowPlaceholder
 		windowSelect.Refresh()
