@@ -46,6 +46,16 @@ type LabelSet struct {
 	StatusWatcherWarningFormat       string
 	LanguageHeading                  string
 	LanguageAutoOption               string
+	CompatibilityModeHeading         string
+	CompatibilityModeAuto            string
+	CompatibilityModeOn              string
+	CompatibilityModeOff             string
+	CompatibilityStatusFormat        string
+	CompatibilityStatusActive        string
+	CompatibilityStatusInactive      string
+	CompatibilityStatusUnknown       string
+	CompatibilityHelpTitle           string
+	CompatibilityHelpMessage         string
 }
 
 type LanguageMetadata struct {
@@ -103,6 +113,16 @@ var (
 				StatusWatcherWarningFormat:       "Warning: foreground watcher failed, falling back: %s",
 				LanguageHeading:                  "Interface Language",
 				LanguageAutoOption:               "Auto (System)",
+				CompatibilityModeHeading:         "Modifier Compatibility",
+				CompatibilityModeAuto:            "Auto (Known apps)",
+				CompatibilityModeOn:              "Force On",
+				CompatibilityModeOff:             "Force Off",
+				CompatibilityStatusFormat:        "Modifier compatibility: %s",
+				CompatibilityStatusActive:        "Active",
+				CompatibilityStatusInactive:      "Inactive",
+				CompatibilityStatusUnknown:       "Unknown (no target)",
+				CompatibilityHelpTitle:           "Modifier compatibility",
+				CompatibilityHelpMessage:         "Some apps may not detect Alt, Shift, or AltGr correctly. Auto: Applies a fix for known apps like Citrix Workspace or HPE iLO. Always on: Always apply the fix. Off: Never apply the fix.",
 			},
 		},
 		{
@@ -147,6 +167,16 @@ var (
 				StatusWatcherWarningFormat:       "Warnung: Vordergrundüberwachung fehlgeschlagen, Fallback: %s",
 				LanguageHeading:                  "Anzeigesprache",
 				LanguageAutoOption:               "Automatisch (System)",
+				CompatibilityModeHeading:         "Modifikatorkompatibilität",
+				CompatibilityModeAuto:            "Auto (bekannte Apps)",
+				CompatibilityModeOn:              "Immer aktiv",
+				CompatibilityModeOff:             "Deaktiviert",
+				CompatibilityStatusFormat:        "Modifikatorkompatibilität: %s",
+				CompatibilityStatusActive:        "Aktiv",
+				CompatibilityStatusInactive:      "Inaktiv",
+				CompatibilityStatusUnknown:       "Unbekannt (kein Ziel)",
+				CompatibilityHelpTitle:           "Modifikatorkompatibilität",
+				CompatibilityHelpMessage:         "Manche Apps erkennen Alt, Shift oder AltGr nicht richtig. Auto: Wendet eine Korrektur für bekannte Apps wie Citrix Workspace oder HPE iLO an. Immer an: Korrektur immer verwenden. Aus: Korrektur nie verwenden.",
 			},
 		},
 	}

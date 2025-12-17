@@ -42,10 +42,20 @@ Some apps and browser-embedded consoles (e.g. VMware/KVM) ignore Unicode paste o
   - **Windows**: Multiple keyboard layouts supported via `VkKeyScanExW`/`MapVirtualKeyExW` with scan codes
   - **macOS**: Uses system keyboard layout with Unicode character injection
   - **Unicode fallback** for unmappable characters.
+- **Modifier compatibility mode** that sends Alt/Shift/AltGr via hardware scan codes for stubborn consoles (Citrix Workspace, HPE iLO, etc.)
 - **Modern dark-mode GUI** (Fyne)
 - **Localized UI** – auto-detects your OS language with an in-app dropdown to switch (currently English & German)
 - **No install required** – single portable binary
 - **Cross-platform** – Windows and macOS supported
+
+### Modifier Compatibility Mode
+
+Many remote console apps swallow modifier keys, so goclip exposes a dedicated **Modifier Compatibility** selector (Auto / Force On / Force Off). The Auto mode watches the selected/last active window and seamlessly flips to hardware scan-code modifiers for known problematic apps, including:
+
+- **Citrix Workspace / Viewer** (`wfica32.exe`, `CitrixWorkspace.exe`, `CDViewer.exe`, etc.)
+- **HPE iLO Integrated Remote Console** (all native and rebranded console launchers)
+
+If another tool misbehaves, simply set the selector to **Force On** to keep modifiers in scan-code mode for that session.
 
 ---
 
