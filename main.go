@@ -17,16 +17,17 @@ import (
 
 	"goclip/localization"
 
+	_ "embed"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"golang.org/x/sys/windows"
-
-	_ "embed"
 )
 
 //go:embed assets/logo/app.ico
@@ -1219,11 +1220,26 @@ func main() {
 	compatibilitySettingToLabel := make(map[compatibilityModeSetting]string)
 	compatibilitySelectUpdating := false
 	compatibilityStatusLabel := widget.NewLabel("")
-	compatibilityHelpBtn := widget.NewButtonWithIcon("", theme.QuestionIcon(), func() {
+
+	// Create a small tappable icon for help
+	helpSize := fyne.NewSize(18, 18)
+
+	helpImg := canvas.NewImageFromResource(theme.QuestionIcon())
+	helpImg.FillMode = canvas.ImageFillContain
+	helpImg.SetMinSize(helpSize)
+
+	compatibilityHelpBtn := widget.NewButton("", func() {
 		labels := getCurrentLabelSet()
 		dialog.NewInformation(labels.CompatibilityHelpTitle, labels.CompatibilityHelpMessage, w).Show()
 	})
 	compatibilityHelpBtn.Importance = widget.LowImportance
+
+	// Force the clickable area and the icon to the same fixed size
+	compatibilityHelpContainer := container.NewGridWrap(
+		helpSize,
+		container.NewMax(compatibilityHelpBtn, helpImg),
+	)
+
 	var updateCompatibilityStatus func()
 
 	refreshSpeedSelectOptions := func(labels localization.LabelSet) {
@@ -1644,23 +1660,33 @@ func main() {
 		refreshBtn,
 		lastActiveLabel,
 	)
-	// right side: layout + speed + custom ms
+	// right side: split into two columns
 	compatibilityHeader := container.NewHBox(
 		compatibilityModeLabel,
-		compatibilityHelpBtn,
+		container.NewCenter(compatibilityHelpContainer),
 	)
 
-	right := container.NewVBox(
+	// left column on the right side: layout + speed
+	rightRight := container.NewVBox(
 		keyboardLayoutLabel,
 		layoutSelect,
 		widget.NewSeparator(),
 		typingSpeedLabel,
 		speedSelect,
 		customMsEntry,
-		widget.NewSeparator(),
+	)
+
+	// right column on the right side: compatibility controls
+	rightLeft := container.NewVBox(
 		compatibilityHeader,
 		compatibilityModeSelect,
 		compatibilityStatusLabel,
+	)
+
+	// combine into a two-column container
+	right := container.NewHBox(
+		rightLeft,
+		rightRight,
 	)
 	// assemble header
 	header := container.NewBorder(nil, nil, left, right, nil)
