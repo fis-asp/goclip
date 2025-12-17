@@ -46,6 +46,14 @@ type LabelSet struct {
 	StatusWatcherWarningFormat       string
 	LanguageHeading                  string
 	LanguageAutoOption               string
+	CompatibilityModeHeading         string
+	CompatibilityModeAuto            string
+	CompatibilityModeOn              string
+	CompatibilityModeOff             string
+	CompatibilityStatusFormat        string
+	CompatibilityStatusActive        string
+	CompatibilityStatusInactive      string
+	CompatibilityStatusUnknown       string
 }
 
 type LanguageMetadata struct {
@@ -103,6 +111,14 @@ var (
 				StatusWatcherWarningFormat:       "Warning: foreground watcher failed, falling back: %s",
 				LanguageHeading:                  "Interface Language",
 				LanguageAutoOption:               "Auto (System)",
+				CompatibilityModeHeading:         "Modifier Compatibility",
+				CompatibilityModeAuto:            "Auto (Known apps)",
+				CompatibilityModeOn:              "Force On",
+				CompatibilityModeOff:             "Force Off",
+				CompatibilityStatusFormat:        "Modifier compatibility: %s",
+				CompatibilityStatusActive:        "Active",
+				CompatibilityStatusInactive:      "Inactive",
+				CompatibilityStatusUnknown:       "Unknown (no target)",
 			},
 		},
 		{
@@ -147,6 +163,14 @@ var (
 				StatusWatcherWarningFormat:       "Warnung: Vordergrundüberwachung fehlgeschlagen, Fallback: %s",
 				LanguageHeading:                  "Anzeigesprache",
 				LanguageAutoOption:               "Automatisch (System)",
+				CompatibilityModeHeading:         "Modifikatorkompatibilität",
+				CompatibilityModeAuto:            "Auto (bekannte Apps)",
+				CompatibilityModeOn:              "Immer aktiv",
+				CompatibilityModeOff:             "Deaktiviert",
+				CompatibilityStatusFormat:        "Modifikatorkompatibilität: %s",
+				CompatibilityStatusActive:        "Aktiv",
+				CompatibilityStatusInactive:      "Inaktiv",
+				CompatibilityStatusUnknown:       "Unbekannt (kein Ziel)",
 			},
 		},
 	}
