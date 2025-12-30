@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +16,7 @@ import (
 	// #include <windows.h>
 	"C"
 
+	"goclip/config"
 	"goclip/localization"
 
 	_ "embed"
@@ -973,9 +975,21 @@ func loadAppIcon() fyne.Resource {
 }
 
 func main() {
+	// Load configuration from disk
+	if err := config.Load(); err != nil {
+		// Config load failed, continue with defaults
+		_ = err
+	}
+	cfg := config.Get()
+
 	systemLanguageCode := localization.DetectSystemLanguage()
-	setCurrentLabelSet(localization.Labels(systemLanguageCode))
-	selectedLanguageCode := ""
+	// Use saved language preference if set
+	selectedLanguageCode := cfg.Language
+	effectiveLanguage := selectedLanguageCode
+	if effectiveLanguage == "" {
+		effectiveLanguage = systemLanguageCode
+	}
+	setCurrentLabelSet(localization.Labels(effectiveLanguage))
 	languageMetas := localization.SupportedLanguages()
 
 	var applyLocalization func(localization.LabelSet)
@@ -1055,7 +1069,10 @@ func main() {
 		"Japanese (JP)",
 		"Korean (KO)",
 	}, nil)
-	layoutSelect.Selected = "Auto (Use System)"
+	layoutSelect.Selected = cfg.KeyboardLayout
+	if layoutSelect.Selected == "" {
+		layoutSelect.Selected = "Auto (Use System)"
+	}
 
 	languageSelect := widget.NewSelect([]string{}, nil)
 	languageLabelToCode := make(map[string]string)
@@ -1107,13 +1124,23 @@ func main() {
 
 	// --- Typing speed controls (dropdown + optional custom ms field) ---
 	speedSelect := widget.NewSelect([]string{}, nil)
-	currentSpeedOption := speedOptionDefault
+	// Initialize speed from config
+	currentSpeedOption := speedOptionID(cfg.DefaultSpeedOption)
+	if currentSpeedOption == "" {
+		currentSpeedOption = speedOptionDefault
+	}
 	speedLabelToID := make(map[string]speedOptionID)
 	speedIDToLabel := make(map[speedOptionID]string)
 	speedSelectUpdating := false
 
 	customMsEntry := widget.NewEntry()
-	customMsEntry.Hide()
+	// Initialize custom ms entry with saved value if custom speed is set
+	if cfg.CustomSpeedMs > 0 {
+		customMsEntry.SetText(strconv.Itoa(cfg.CustomSpeedMs))
+	}
+	if currentSpeedOption != speedOptionCustom {
+		customMsEntry.Hide()
+	}
 
 	// Dynamic per-character delay selection
 	getPerCharDelay := func(text string) time.Duration {
@@ -1215,7 +1242,11 @@ func main() {
 	}
 
 	compatibilityModeSelect := widget.NewSelect([]string{}, nil)
-	currentCompatibilitySetting := compatibilityModeAuto
+	// Initialize compatibility mode from config
+	currentCompatibilitySetting := compatibilityModeSetting(cfg.CompatibilityMode)
+	if currentCompatibilitySetting == "" {
+		currentCompatibilitySetting = compatibilityModeAuto
+	}
 	compatibilityLabelToSetting := make(map[string]compatibilityModeSetting)
 	compatibilitySettingToLabel := make(map[compatibilityModeSetting]string)
 	compatibilitySelectUpdating := false
@@ -1443,11 +1474,11 @@ func main() {
 	}
 
 	// focus-change abort flag and checkbox
-	abortOnFocusChange := true
+	abortOnFocusChange := cfg.AbortOnFocusChange
 	abortFocusCheck := widget.NewCheck("", func(b bool) {
 		abortOnFocusChange = b
 	})
-	abortFocusCheck.SetChecked(true)
+	abortFocusCheck.SetChecked(cfg.AbortOnFocusChange)
 
 	var typeBtn *widget.Button
 	var typeClipboardBtn *widget.Button
@@ -1716,11 +1747,282 @@ func main() {
 		actionContainer,
 		statusLabel,
 	)
-	// bottom right: language selector + version
+
+	// Settings button (gear icon)
+	var settingsBtn *widget.Button
+	showSettingsDialog := func() {
+		labels := getCurrentLabelSet()
+
+		// Create settings dialog
+		settingsWindow := myApp.NewWindow(labels.SettingsTitle)
+		settingsWindow.Resize(fyne.NewSize(600, 500))
+
+		// Copy current config
+		currentCfg := config.Get()
+
+		// Speed option selector
+		settingsSpeedSelect := widget.NewSelect([]string{}, nil)
+		settingsSpeedLabelToID := make(map[string]speedOptionID)
+		settingsSpeedIDToLabel := make(map[speedOptionID]string)
+		settingsCurrentSpeedOption := speedOptionID(currentCfg.DefaultSpeedOption)
+		if settingsCurrentSpeedOption == "" {
+			settingsCurrentSpeedOption = speedOptionDefault
+		}
+
+		// Custom ms entry for settings
+		settingsCustomMsEntry := widget.NewEntry()
+		if currentCfg.CustomSpeedMs > 0 {
+			settingsCustomMsEntry.SetText(strconv.Itoa(currentCfg.CustomSpeedMs))
+		}
+		settingsCustomMsEntry.SetPlaceHolder(labels.SettingsCustomSpeedMs)
+		if settingsCurrentSpeedOption != speedOptionCustom {
+			settingsCustomMsEntry.Hide()
+		}
+
+		settingsSpeedSelect.OnChanged = func(label string) {
+			if id, ok := settingsSpeedLabelToID[label]; ok {
+				settingsCurrentSpeedOption = id
+				if id == speedOptionCustom {
+					settingsCustomMsEntry.Show()
+				} else {
+					settingsCustomMsEntry.Hide()
+				}
+			}
+		}
+
+		// Populate speed options
+		settingsSpeedIDToLabel = map[speedOptionID]string{
+			speedOptionDefault:   labels.SpeedDefault,
+			speedOptionMedium:    labels.SpeedMedium,
+			speedOptionSlow:      labels.SpeedSlow,
+			speedOptionSuperSlow: labels.SpeedSuperSlow,
+			speedOptionCustom:    labels.SpeedCustom,
+		}
+		speedOptions := make([]string, 0, len(speedOptionOrder))
+		for _, id := range speedOptionOrder {
+			label := settingsSpeedIDToLabel[id]
+			speedOptions = append(speedOptions, label)
+			settingsSpeedLabelToID[label] = id
+		}
+		settingsSpeedSelect.Options = speedOptions
+		if label, ok := settingsSpeedIDToLabel[settingsCurrentSpeedOption]; ok {
+			settingsSpeedSelect.SetSelected(label)
+		}
+
+		// Keyboard layout selector
+		settingsLayoutSelect := widget.NewSelect(layoutSelect.Options, nil)
+		settingsLayoutSelect.SetSelected(currentCfg.KeyboardLayout)
+
+		// Compatibility mode selector
+		settingsCompatSelect := widget.NewSelect([]string{}, nil)
+		settingsCompatLabelToSetting := make(map[string]compatibilityModeSetting)
+		settingsCompatSettingToLabel := map[compatibilityModeSetting]string{
+			compatibilityModeAuto:     labels.CompatibilityModeAuto,
+			compatibilityModeForceOn:  labels.CompatibilityModeOn,
+			compatibilityModeForceOff: labels.CompatibilityModeOff,
+		}
+		compatOptions := make([]string, 0, len(compatibilityModeOrder))
+		for _, setting := range compatibilityModeOrder {
+			label := settingsCompatSettingToLabel[setting]
+			compatOptions = append(compatOptions, label)
+			settingsCompatLabelToSetting[label] = setting
+		}
+		settingsCompatSelect.Options = compatOptions
+		settingsCurrentCompatMode := compatibilityModeSetting(currentCfg.CompatibilityMode)
+		if label, ok := settingsCompatSettingToLabel[settingsCurrentCompatMode]; ok {
+			settingsCompatSelect.SetSelected(label)
+		}
+
+		// Abort on focus change checkbox
+		settingsAbortFocusCheck := widget.NewCheck(labels.SettingsAbortFocusLabel, nil)
+		settingsAbortFocusCheck.SetChecked(currentCfg.AbortOnFocusChange)
+
+		// Language selector
+		settingsLanguageSelect := widget.NewSelect(languageSelect.Options, nil)
+		settingsLanguageLabelToCode := make(map[string]string)
+		autoLabel := labels.LanguageAutoOption
+		settingsLanguageLabelToCode[autoLabel] = ""
+		for _, meta := range languageMetas {
+			settingsLanguageLabelToCode[meta.NativeName] = meta.Code
+		}
+
+		selectedLabel := autoLabel
+		if currentCfg.Language != "" {
+			for _, meta := range languageMetas {
+				if meta.Code == currentCfg.Language {
+					selectedLabel = meta.NativeName
+					break
+				}
+			}
+		}
+		settingsLanguageSelect.SetSelected(selectedLabel)
+
+		// Status label for save confirmation
+		settingsStatusLabel := widget.NewLabel("")
+
+		// Save button
+		saveBtn := widget.NewButton(labels.SettingsSaveButton, func() {
+			// Build new config from form
+			newCfg := config.Config{
+				DefaultSpeedOption: config.SpeedOption(settingsCurrentSpeedOption),
+				CustomSpeedMs:      0,
+				KeyboardLayout:     settingsLayoutSelect.Selected,
+				CompatibilityMode:  config.CompatibilityMode(settingsCurrentCompatMode),
+				AbortOnFocusChange: settingsAbortFocusCheck.Checked,
+				Language:           settingsLanguageLabelToCode[settingsLanguageSelect.Selected],
+			}
+
+			// Parse custom speed if custom is selected
+			if settingsCurrentSpeedOption == speedOptionCustom {
+				if val := strings.TrimSpace(settingsCustomMsEntry.Text); val != "" {
+					if ms, err := strconv.Atoi(val); err == nil && ms >= 0 && ms <= 10000 {
+						newCfg.CustomSpeedMs = ms
+					}
+				}
+			}
+
+			// Handle compatibility mode selection change
+			if label := settingsCompatSelect.Selected; label != "" {
+				if setting, ok := settingsCompatLabelToSetting[label]; ok {
+					newCfg.CompatibilityMode = config.CompatibilityMode(setting)
+				}
+			}
+
+			// Save config
+			if err := config.SaveConfig(newCfg); err != nil {
+				dialog.ShowError(err, settingsWindow)
+				return
+			}
+
+			// Apply settings to main window
+			currentSpeedOption = speedOptionID(newCfg.DefaultSpeedOption)
+			if currentSpeedOption == speedOptionCustom && newCfg.CustomSpeedMs > 0 {
+				customMsEntry.SetText(strconv.Itoa(newCfg.CustomSpeedMs))
+				customMsEntry.Show()
+			} else if currentSpeedOption != speedOptionCustom {
+				customMsEntry.Hide()
+			}
+			if label, ok := speedIDToLabel[currentSpeedOption]; ok {
+				speedSelect.SetSelected(label)
+			}
+
+			layoutSelect.SetSelected(newCfg.KeyboardLayout)
+
+			currentCompatibilitySetting = compatibilityModeSetting(newCfg.CompatibilityMode)
+			if label, ok := compatibilitySettingToLabel[currentCompatibilitySetting]; ok {
+				compatibilityModeSelect.SetSelected(label)
+			}
+
+			abortOnFocusChange = newCfg.AbortOnFocusChange
+			abortFocusCheck.SetChecked(newCfg.AbortOnFocusChange)
+
+			// Apply language change
+			selectedLanguageCode = newCfg.Language
+			applyLanguageSelection()
+
+			updateDelayLabel()
+			updateCompatibilityStatus()
+
+			settingsStatusLabel.SetText(labels.SettingsSavedStatus)
+			settingsStatusLabel.Refresh()
+
+			// Close the settings window after saving
+			settingsWindow.Close()
+		})
+		saveBtn.Importance = widget.HighImportance
+
+		// Cancel button
+		cancelBtn := widget.NewButton(labels.SettingsCancelButton, func() {
+			settingsWindow.Close()
+		})
+
+		// Reset button
+		resetBtn := widget.NewButton(labels.SettingsResetButton, func() {
+			dialog.ShowConfirm(
+				labels.SettingsResetConfirmTitle,
+				labels.SettingsResetConfirmMessage,
+				func(confirmed bool) {
+					if confirmed {
+						defaultCfg := config.DefaultConfig()
+						if err := config.SaveConfig(defaultCfg); err != nil {
+							dialog.ShowError(err, settingsWindow)
+							return
+						}
+						settingsWindow.Close()
+
+						// Reload and apply defaults
+						_ = config.Load()
+						cfg := config.Get()
+
+						currentSpeedOption = speedOptionID(cfg.DefaultSpeedOption)
+						if label, ok := speedIDToLabel[currentSpeedOption]; ok {
+							speedSelect.SetSelected(label)
+						}
+						customMsEntry.SetText("")
+						customMsEntry.Hide()
+
+						layoutSelect.SetSelected(cfg.KeyboardLayout)
+
+						currentCompatibilitySetting = compatibilityModeSetting(cfg.CompatibilityMode)
+						if label, ok := compatibilitySettingToLabel[currentCompatibilitySetting]; ok {
+							compatibilityModeSelect.SetSelected(label)
+						}
+
+						abortOnFocusChange = cfg.AbortOnFocusChange
+						abortFocusCheck.SetChecked(cfg.AbortOnFocusChange)
+
+						selectedLanguageCode = cfg.Language
+						applyLanguageSelection()
+
+						updateDelayLabel()
+						updateCompatibilityStatus()
+					}
+				},
+				settingsWindow,
+			)
+		})
+		resetBtn.Importance = widget.WarningImportance
+
+		// Create settings form
+		settingsContent := container.NewVBox(
+			widget.NewLabelWithStyle(labels.SettingsDefaultSpeedHeading, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			settingsSpeedSelect,
+			settingsCustomMsEntry,
+			widget.NewSeparator(),
+
+			widget.NewLabelWithStyle(labels.SettingsKeyboardLayoutLabel, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			settingsLayoutSelect,
+			widget.NewSeparator(),
+
+			widget.NewLabelWithStyle(labels.SettingsCompatibilityLabel, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			settingsCompatSelect,
+			widget.NewSeparator(),
+
+			settingsAbortFocusCheck,
+			widget.NewSeparator(),
+
+			widget.NewLabelWithStyle(labels.SettingsLanguageLabel, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			settingsLanguageSelect,
+			widget.NewSeparator(),
+
+			container.NewHBox(saveBtn, cancelBtn, resetBtn),
+			settingsStatusLabel,
+		)
+
+		scrollContainer := container.NewVScroll(settingsContent)
+		settingsWindow.SetContent(scrollContainer)
+		settingsWindow.Show()
+	}
+
+	settingsBtn = widget.NewButtonWithIcon("", theme.SettingsIcon(), showSettingsDialog)
+	settingsBtn.Importance = widget.LowImportance
+
+	// bottom right: language selector + version + settings button
 	bottom_right := container.NewVBox(
 		abortFocusCheck,
 		languageHeadingLabel,
 		languageSelect,
+		settingsBtn,
 		versionLabel,
 	)
 	// assemble footer
@@ -1749,6 +2051,7 @@ func main() {
 		typeBtn.SetText(labels.TypeButton)
 		typeClipboardBtn.SetText(labels.TypeClipboardButton)
 		stopBtn.SetText(labels.StopButton)
+		settingsBtn.SetText(labels.SettingsButton)
 		abortFocusCheck.SetText(labels.AbortOnFocusChange)
 		customMsEntry.SetPlaceHolder(labels.CustomMsPlaceholder)
 		windowSelect.PlaceHolder = labels.WindowPlaceholder

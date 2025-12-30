@@ -57,6 +57,23 @@ type LabelSet struct {
 	CompatibilityHelpTitle           string
 	CompatibilityHelpMessage         string
 	AbortOnFocusChange               string
+
+	// Settings page
+	SettingsTitle               string
+	SettingsButton              string
+	SettingsDefaultSpeedHeading string
+	SettingsCustomSpeedLabel    string
+	SettingsCustomSpeedMs       string
+	SettingsKeyboardLayoutLabel string
+	SettingsCompatibilityLabel  string
+	SettingsAbortFocusLabel     string
+	SettingsLanguageLabel       string
+	SettingsSaveButton          string
+	SettingsCancelButton        string
+	SettingsSavedStatus         string
+	SettingsResetButton         string
+	SettingsResetConfirmTitle   string
+	SettingsResetConfirmMessage string
 }
 
 type LanguageMetadata struct {
@@ -125,6 +142,23 @@ var (
 				CompatibilityHelpTitle:           "Modifier compatibility",
 				CompatibilityHelpMessage:         "Some apps may not detect Alt, Shift, or AltGr correctly. Auto: Applies a fix for known apps like Citrix Workspace or HPE iLO. Always on: Always apply the fix. Off: Never apply the fix.",
 				AbortOnFocusChange:               "Abort on focus change",
+
+				// Settings page
+				SettingsTitle:               "Settings",
+				SettingsButton:              "Settings",
+				SettingsDefaultSpeedHeading: "Default Typing Speed",
+				SettingsCustomSpeedLabel:    "Custom Speed (ms)",
+				SettingsCustomSpeedMs:       "milliseconds per character",
+				SettingsKeyboardLayoutLabel: "Default Keyboard Layout",
+				SettingsCompatibilityLabel:  "Default Modifier Compatibility",
+				SettingsAbortFocusLabel:     "Abort on focus change by default",
+				SettingsLanguageLabel:       "Interface Language",
+				SettingsSaveButton:          "Save",
+				SettingsCancelButton:        "Cancel",
+				SettingsSavedStatus:         "Settings saved.",
+				SettingsResetButton:         "Reset to Defaults",
+				SettingsResetConfirmTitle:   "Reset Settings",
+				SettingsResetConfirmMessage: "Are you sure you want to reset all settings to their default values?",
 			},
 		},
 		{
@@ -180,6 +214,23 @@ var (
 				CompatibilityHelpTitle:           "Modifikatorkompatibilität",
 				CompatibilityHelpMessage:         "Manche Apps erkennen Alt, Shift oder AltGr nicht richtig. Auto: Wendet eine Korrektur für bekannte Apps wie Citrix Workspace oder HPE iLO an. Immer an: Korrektur immer verwenden. Aus: Korrektur nie verwenden.",
 				AbortOnFocusChange:               "Bei Fokuswechsel abbrechen",
+
+				// Settings page
+				SettingsTitle:               "Einstellungen",
+				SettingsButton:              "Einstellungen",
+				SettingsDefaultSpeedHeading: "Standard-Schreibgeschwindigkeit",
+				SettingsCustomSpeedLabel:    "Benutzerdefinierte Geschwindigkeit (ms)",
+				SettingsCustomSpeedMs:       "Millisekunden pro Zeichen",
+				SettingsKeyboardLayoutLabel: "Standard-Tastaturlayout",
+				SettingsCompatibilityLabel:  "Standard-Modifikatorkompatibilität",
+				SettingsAbortFocusLabel:     "Standardmäßig bei Fokuswechsel abbrechen",
+				SettingsLanguageLabel:       "Anzeigesprache",
+				SettingsSaveButton:          "Speichern",
+				SettingsCancelButton:        "Abbrechen",
+				SettingsSavedStatus:         "Einstellungen gespeichert.",
+				SettingsResetButton:         "Auf Standard zurücksetzen",
+				SettingsResetConfirmTitle:   "Einstellungen zurücksetzen",
+				SettingsResetConfirmMessage: "Möchten Sie wirklich alle Einstellungen auf die Standardwerte zurücksetzen?",
 			},
 		},
 	}
