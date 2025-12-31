@@ -244,6 +244,11 @@ bool mapRuneToKey(UniChar target, uint16_t *outKeyCode, uint32_t *outMods) {
 }
 
 // Global hotkey registration for macOS using Carbon
+#define kVK_ANSI_G 5
+#define HOTKEY_SUCCESS 1
+#define HOTKEY_FAILURE 0
+#define HOTKEY_ID 1
+
 static EventHotKeyRef gHotKeyRef = NULL;
 static EventHandlerUPP gHotKeyHandler = NULL;
 
@@ -252,7 +257,7 @@ OSStatus hotKeyEventHandler(EventHandlerCallRef nextHandler, EventRef event, voi
 	EventHotKeyID hkID;
 	OSStatus err = GetEventParameter(event, kEventParamDirectObject, typeEventHotKeyID, NULL, sizeof(EventHotKeyID), NULL, &hkID);
 	
-	if (err == noErr && hkID.id == 1) {
+	if (err == noErr && hkID.id == HOTKEY_ID) {
 		// Signal Go that hotkey was pressed
 		extern void hotkeyPressed();
 		hotkeyPressed();
@@ -264,7 +269,7 @@ OSStatus hotKeyEventHandler(EventHandlerCallRef nextHandler, EventRef event, voi
 // Register Cmd+G hotkey
 int registerHotkey() {
 	if (gHotKeyRef != NULL) {
-		return 0; // Already registered
+		return HOTKEY_FAILURE; // Already registered
 	}
 	
 	EventTypeSpec eventType;
@@ -276,19 +281,19 @@ int registerHotkey() {
 	
 	EventHotKeyID hkID;
 	hkID.signature = 'gclp';
-	hkID.id = 1;
+	hkID.id = HOTKEY_ID;
 	
-	// Register Cmd+G (kVK_ANSI_G = 5, cmdKey modifier)
+	// Register Cmd+G hotkey
 	OSStatus status = RegisterEventHotKey(
-		5,                    // kVK_ANSI_G
-		cmdKey,               // modifier
+		kVK_ANSI_G,           // Virtual key code for 'G'
+		cmdKey,               // Cmd modifier
 		hkID,
 		GetApplicationEventTarget(),
 		0,
 		&gHotKeyRef
 	);
 	
-	return (status == noErr) ? 1 : 0;
+	return (status == noErr) ? HOTKEY_SUCCESS : HOTKEY_FAILURE;
 }
 
 // Unregister hotkey
@@ -353,6 +358,10 @@ var (
 var (
 	macHotkeyCallback   func()
 	macHotkeyCallbackMu sync.Mutex
+)
+
+const (
+	hotkeyRegistrationSuccess = 1
 )
 
 // hotkeyPressed is called from C when the hotkey is pressed
@@ -1288,7 +1297,7 @@ func main() {
 	refreshWindows()
 
 	// Register global hotkey (Cmd+G) for "Type Clipboard"
-	if int(C.registerHotkey()) == 1 {
+	if int(C.registerHotkey()) == hotkeyRegistrationSuccess {
 		// Set up hotkey callback to trigger typeClipboardBtn
 		setMacHotkeyCallback(func() {
 			if typeClipboardBtn != nil {

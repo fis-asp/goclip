@@ -475,9 +475,10 @@ type msg struct {
 
 var (
 	hotkeyRegistered  = false
-	hotkeyStopChan    = make(chan struct{})
+	hotkeyStopChan    = make(chan struct{}, 1)
 	hotkeyCallback    func()
 	hotkeyCallbackMu  sync.Mutex
+	hotkeyStopOnce    sync.Once
 )
 
 // registerHotkey registers a global hotkey with Windows.
@@ -508,12 +509,6 @@ func unregisterHotkey() {
 // Must be called in a separate goroutine.
 func startHotkeyListener() {
 	for {
-		select {
-		case <-hotkeyStopChan:
-			return
-		default:
-		}
-
 		var m msg
 		r, _, _ := procGetMessageW.Call(
 			uintptr(unsafe.Pointer(&m)),
@@ -525,6 +520,13 @@ func startHotkeyListener() {
 		// GetMessage returns 0 when WM_QUIT is received, -1 on error
 		if r == 0 || r == ^uintptr(0) {
 			return
+		}
+
+		// Check if we should stop
+		select {
+		case <-hotkeyStopChan:
+			return
+		default:
 		}
 
 		if m.Message == wmHotkey && m.WParam == hotkeyID {
@@ -545,10 +547,12 @@ func startHotkeyListener() {
 
 // stopHotkeyListener stops the hotkey message loop.
 func stopHotkeyListener() {
-	select {
-	case hotkeyStopChan <- struct{}{}:
-	default:
-	}
+	hotkeyStopOnce.Do(func() {
+		select {
+		case hotkeyStopChan <- struct{}{}:
+		default:
+		}
+	})
 }
 
 // setHotkeyCallback sets the function to be called when the hotkey is pressed.
