@@ -42,6 +42,10 @@ Some apps and browser-embedded consoles (e.g. VMware/KVM) ignore Unicode paste o
   - **Windows**: Multiple keyboard layouts supported via `VkKeyScanExW`/`MapVirtualKeyExW` with scan codes
   - **macOS**: Uses system keyboard layout with Unicode character injection
   - **Unicode fallback** for unmappable characters.
+- **Global hotkey support** for quick clipboard typing
+  - **Windows**: Press `Ctrl+G` to instantly type clipboard contents to the last active window
+  - **macOS**: Press `Cmd+G` to instantly type clipboard contents to the last active window
+  - Works even when goclip is minimized or in the background
 - **Modifier compatibility mode** that sends Alt/Shift/AltGr via hardware scan codes for stubborn consoles (Citrix Workspace, HPE iLO, etc.)
 - **Modern dark-mode GUI** (Fyne)
 - **Localized UI** – auto-detects your OS language with an in-app dropdown to switch (currently English & German)
@@ -177,6 +181,14 @@ The built binary can be run directly or packaged into an `.app` bundle for distr
 4. Type your text in the big box.
 5. Click **Type**.  
    goclip briefly focuses the target window and injects keystrokes.
+
+### Quick Clipboard Typing with Hotkey
+
+For even faster workflow, use the global hotkey:
+- **Windows**: Press `Ctrl+G` anywhere to instantly type your clipboard contents into the last active window
+- **macOS**: Press `Cmd+G` anywhere to instantly type your clipboard contents into the last active window
+
+This is perfect for passwords, commands, or any text you've just copied. The hotkey works even when goclip is minimized or in the background.
 
 ---
 
