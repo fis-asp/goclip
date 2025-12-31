@@ -21,7 +21,7 @@ typedef struct {
     char appName[256];
 } WindowInfo;
 
-int getVisibleWindows(WindowInfo* windows, int maxWindows) {
+static int getVisibleWindows(WindowInfo* windows, int maxWindows) {
     @autoreleasepool {
         int count = 0;
 
@@ -95,7 +95,7 @@ int getVisibleWindows(WindowInfo* windows, int maxWindows) {
 }
 
 // Activate a window by PID
-bool activateWindowByPID(int pid) {
+static bool activateWindowByPID(int pid) {
     @autoreleasepool {
         NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
         if (app) {
@@ -106,7 +106,7 @@ bool activateWindowByPID(int pid) {
 }
 
 // Get current frontmost application PID
-int getFrontmostPID() {
+static int getFrontmostPID() {
     @autoreleasepool {
         NSRunningApplication *app = [[NSWorkspace sharedWorkspace] frontmostApplication];
         if (app) {
@@ -117,7 +117,7 @@ int getFrontmostPID() {
 }
 
 // Get application name for PID
-void getAppNameForPID(int pid, char* name, int maxLen) {
+static void getAppNameForPID(int pid, char* name, int maxLen) {
     @autoreleasepool {
         NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
         if (app) {
@@ -133,13 +133,13 @@ void getAppNameForPID(int pid, char* name, int maxLen) {
 }
 
 // Check if accessibility permissions are granted
-bool checkAccessibilityPermissions() {
+static bool checkAccessibilityPermissions() {
     NSDictionary *options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
     return AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
 }
 
 // Raise and focus a specific window belonging to pid, matched by exact title.
-bool raiseWindowByPIDAndTitle(int pid, const char* ctitle) {
+static bool raiseWindowByPIDAndTitle(int pid, const char* ctitle) {
 	if (!ctitle) return false;
 	CFStringRef targetTitle = CFStringCreateWithCString(kCFAllocatorDefault, ctitle, kCFStringEncodingUTF8);
 	if (!targetTitle) return false;
@@ -185,7 +185,7 @@ bool raiseWindowByPIDAndTitle(int pid, const char* ctitle) {
 
 // Map a Unicode character to a keycode + basic modifiers (Shift, Option) for the current keyboard layout.
 // outMods bit 0 => Shift, bit 1 => Option
-bool mapRuneToKey(UniChar target, uint16_t *outKeyCode, uint32_t *outMods) {
+static bool mapRuneToKey(UniChar target, uint16_t *outKeyCode, uint32_t *outMods) {
 	// Prefer ASCII-capable source, fallback to current
 	TISInputSourceRef source = TISCopyCurrentASCIICapableKeyboardLayoutInputSource();
 	if (!source) source = TISCopyCurrentKeyboardLayoutInputSource();
@@ -253,7 +253,7 @@ static EventHotKeyRef gHotKeyRef = NULL;
 static EventHandlerUPP gHotKeyHandler = NULL;
 
 // Hotkey event handler
-OSStatus hotKeyEventHandler(EventHandlerCallRef nextHandler, EventRef event, void *userData) {
+static OSStatus hotKeyEventHandler(EventHandlerCallRef nextHandler, EventRef event, void *userData) {
 	EventHotKeyID hkID;
 	OSStatus err = GetEventParameter(event, kEventParamDirectObject, typeEventHotKeyID, NULL, sizeof(EventHotKeyID), NULL, &hkID);
 	
@@ -267,7 +267,7 @@ OSStatus hotKeyEventHandler(EventHandlerCallRef nextHandler, EventRef event, voi
 }
 
 // Register Cmd+G hotkey
-int registerHotkey() {
+static int registerHotkey() {
 	if (gHotKeyRef != NULL) {
 		return HOTKEY_FAILURE; // Already registered
 	}
@@ -297,7 +297,7 @@ int registerHotkey() {
 }
 
 // Unregister hotkey
-void unregisterHotkey() {
+static void unregisterHotkey() {
 	if (gHotKeyRef != NULL) {
 		UnregisterEventHotKey(gHotKeyRef);
 		gHotKeyRef = NULL;
