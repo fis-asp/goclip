@@ -57,6 +57,7 @@ type LabelSet struct {
 	CompatibilityHelpTitle           string
 	CompatibilityHelpMessage         string
 	AbortOnFocusChange               string
+	HotkeyInfo                       string
 }
 
 type LanguageMetadata struct {
@@ -125,6 +126,7 @@ var (
 				CompatibilityHelpTitle:           "Modifier compatibility",
 				CompatibilityHelpMessage:         "Some apps may not detect Alt, Shift, or AltGr correctly. Auto: Applies a fix for known apps like Citrix Workspace or HPE iLO. Always on: Always apply the fix. Off: Never apply the fix.",
 				AbortOnFocusChange:               "Abort on focus change",
+				HotkeyInfo:                       "Hotkey: Ctrl+G",
 			},
 		},
 		{
@@ -180,6 +182,7 @@ var (
 				CompatibilityHelpTitle:           "Modifikatorkompatibilität",
 				CompatibilityHelpMessage:         "Manche Apps erkennen Alt, Shift oder AltGr nicht richtig. Auto: Wendet eine Korrektur für bekannte Apps wie Citrix Workspace oder HPE iLO an. Immer an: Korrektur immer verwenden. Aus: Korrektur nie verwenden.",
 				AbortOnFocusChange:               "Bei Fokuswechsel abbrechen",
+				HotkeyInfo:                       "Tastenkombination: Strg+G",
 			},
 		},
 	}

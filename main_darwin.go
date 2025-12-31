@@ -243,6 +243,66 @@ bool mapRuneToKey(UniChar target, uint16_t *outKeyCode, uint32_t *outMods) {
 	return false;
 }
 
+// Global hotkey registration for macOS using Carbon
+static EventHotKeyRef gHotKeyRef = NULL;
+static EventHandlerUPP gHotKeyHandler = NULL;
+
+// Hotkey event handler
+OSStatus hotKeyEventHandler(EventHandlerCallRef nextHandler, EventRef event, void *userData) {
+	EventHotKeyID hkID;
+	OSStatus err = GetEventParameter(event, kEventParamDirectObject, typeEventHotKeyID, NULL, sizeof(EventHotKeyID), NULL, &hkID);
+	
+	if (err == noErr && hkID.id == 1) {
+		// Signal Go that hotkey was pressed
+		extern void hotkeyPressed();
+		hotkeyPressed();
+	}
+	
+	return noErr;
+}
+
+// Register Cmd+G hotkey
+int registerHotkey() {
+	if (gHotKeyRef != NULL) {
+		return 0; // Already registered
+	}
+	
+	EventTypeSpec eventType;
+	eventType.eventClass = kEventClassKeyboard;
+	eventType.eventKind = kEventHotKeyPressed;
+	
+	gHotKeyHandler = NewEventHandlerUPP(hotKeyEventHandler);
+	InstallEventHandler(GetApplicationEventTarget(), gHotKeyHandler, 1, &eventType, NULL, NULL);
+	
+	EventHotKeyID hkID;
+	hkID.signature = 'gclp';
+	hkID.id = 1;
+	
+	// Register Cmd+G (kVK_ANSI_G = 5, cmdKey modifier)
+	OSStatus status = RegisterEventHotKey(
+		5,                    // kVK_ANSI_G
+		cmdKey,               // modifier
+		hkID,
+		GetApplicationEventTarget(),
+		0,
+		&gHotKeyRef
+	);
+	
+	return (status == noErr) ? 1 : 0;
+}
+
+// Unregister hotkey
+void unregisterHotkey() {
+	if (gHotKeyRef != NULL) {
+		UnregisterEventHotKey(gHotKeyRef);
+		gHotKeyRef = NULL;
+	}
+	if (gHotKeyHandler != NULL) {
+		DisposeEventHandlerUPP(gHotKeyHandler);
+		gHotKeyHandler = NULL;
+	}
+}
+
 */
 import "C"
 
@@ -288,6 +348,33 @@ var (
 	layoutMap   = map[rune]keyMods{}
 	layoutMapMu sync.RWMutex
 )
+
+// Global hotkey callback for macOS
+var (
+	macHotkeyCallback   func()
+	macHotkeyCallbackMu sync.Mutex
+)
+
+// hotkeyPressed is called from C when the hotkey is pressed
+//
+//export hotkeyPressed
+func hotkeyPressed() {
+	macHotkeyCallbackMu.Lock()
+	cb := macHotkeyCallback
+	macHotkeyCallbackMu.Unlock()
+
+	if cb != nil {
+		// Execute callback in main thread via fyne.Do
+		fyne.Do(cb)
+	}
+}
+
+// setMacHotkeyCallback sets the function to be called when the hotkey is pressed
+func setMacHotkeyCallback(cb func()) {
+	macHotkeyCallbackMu.Lock()
+	macHotkeyCallback = cb
+	macHotkeyCallbackMu.Unlock()
+}
 
 var (
 	ignoredAppNamesLower = map[string]struct{}{
@@ -1164,12 +1251,16 @@ func main() {
 
 	header := container.NewBorder(nil, nil, left, right, nil)
 
+	hotkeyInfoLabel := widget.NewLabel("Hotkey: Cmd+G")
+	hotkeyInfoLabel.TextStyle = fyne.TextStyle{Italic: true}
+
 	body := container.NewVBox(
 		widget.NewLabelWithStyle("Text to type", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		inputRow,
 		delayLabel,
 		actionContainer,
 		status,
+		hotkeyInfoLabel,
 	)
 
 	content := container.NewBorder(header, nil, nil, nil, body)
@@ -1177,6 +1268,27 @@ func main() {
 
 	updateDelayLabel()
 	refreshWindows()
+
+	// Register global hotkey (Cmd+G) for "Type Clipboard"
+	if int(C.registerHotkey()) == 1 {
+		// Set up hotkey callback to trigger typeClipboardBtn
+		setMacHotkeyCallback(func() {
+			if typeClipboardBtn != nil {
+				// Only trigger if not already typing
+				typingMu.Lock()
+				isTyping := typingStopRequested
+				typingMu.Unlock()
+
+				if !isTyping {
+					// Simulate clicking the Type Clipboard button
+					typeClipboardBtn.OnTapped()
+				}
+			}
+		})
+		
+		// Ensure cleanup on exit
+		defer C.unregisterHotkey()
+	}
 
 	w.ShowAndRun()
 

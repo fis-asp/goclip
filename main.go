@@ -249,6 +249,11 @@ var (
 	procGetKeyboardLayout        = user32.NewProc("GetKeyboardLayout")
 	procGetWindowThreadProcessId = user32.NewProc("GetWindowThreadProcessId")
 	procGetForegroundWindow      = user32.NewProc("GetForegroundWindow")
+	procRegisterHotKey           = user32.NewProc("RegisterHotKey")
+	procUnregisterHotKey         = user32.NewProc("UnregisterHotKey")
+	procGetMessageW              = user32.NewProc("GetMessageW")
+	procTranslateMessage         = user32.NewProc("TranslateMessage")
+	procDispatchMessageW         = user32.NewProc("DispatchMessageW")
 
 	procQueryFullProcessImageNameW = kernel32.NewProc("QueryFullProcessImageNameW")
 )
@@ -270,6 +275,12 @@ const (
 	mapvkVKToVSC = 0
 
 	processQueryLimitedInformation = 0x1000
+
+	// Hotkey constants
+	wmHotkey              = 0x0312
+	modControl            = 0x0002
+	hotkeyID              = 1
+	vkG                   = 0x47 // Virtual key code for 'G'
 )
 
 // ---------- Ignore lists (lowercased) ----------
@@ -446,6 +457,105 @@ func stopForegroundWatcher() {
 		foregroundEventHook = 0
 	}
 	foregroundCallbackRef = 0
+}
+
+// ------------------------- Global Hotkey Support -------------------------
+//
+// Registers and listens for global hotkeys using Windows RegisterHotKey API.
+//
+
+type msg struct {
+	Hwnd    uintptr
+	Message uint32
+	WParam  uintptr
+	LParam  uintptr
+	Time    uint32
+	Pt      struct{ X, Y int32 }
+}
+
+var (
+	hotkeyRegistered  = false
+	hotkeyStopChan    = make(chan struct{})
+	hotkeyCallback    func()
+	hotkeyCallbackMu  sync.Mutex
+)
+
+// registerHotkey registers a global hotkey with Windows.
+// Currently hardcoded to Ctrl+G.
+func registerHotkey() error {
+	r, _, err := procRegisterHotKey.Call(
+		0,              // NULL window handle (thread message queue)
+		uintptr(hotkeyID),
+		uintptr(modControl),
+		uintptr(vkG),
+	)
+	if r == 0 {
+		return fmt.Errorf("RegisterHotKey failed: %v", err)
+	}
+	hotkeyRegistered = true
+	return nil
+}
+
+// unregisterHotkey removes the registered global hotkey.
+func unregisterHotkey() {
+	if hotkeyRegistered {
+		procUnregisterHotKey.Call(0, uintptr(hotkeyID))
+		hotkeyRegistered = false
+	}
+}
+
+// startHotkeyListener starts a message loop to listen for hotkey events.
+// Must be called in a separate goroutine.
+func startHotkeyListener() {
+	for {
+		select {
+		case <-hotkeyStopChan:
+			return
+		default:
+		}
+
+		var m msg
+		r, _, _ := procGetMessageW.Call(
+			uintptr(unsafe.Pointer(&m)),
+			0,
+			0,
+			0,
+		)
+
+		// GetMessage returns 0 when WM_QUIT is received, -1 on error
+		if r == 0 || r == ^uintptr(0) {
+			return
+		}
+
+		if m.Message == wmHotkey && m.WParam == hotkeyID {
+			hotkeyCallbackMu.Lock()
+			cb := hotkeyCallback
+			hotkeyCallbackMu.Unlock()
+
+			if cb != nil {
+				// Execute callback in main thread via fyne.Do
+				fyne.Do(cb)
+			}
+		} else {
+			procTranslateMessage.Call(uintptr(unsafe.Pointer(&m)))
+			procDispatchMessageW.Call(uintptr(unsafe.Pointer(&m)))
+		}
+	}
+}
+
+// stopHotkeyListener stops the hotkey message loop.
+func stopHotkeyListener() {
+	select {
+	case hotkeyStopChan <- struct{}{}:
+	default:
+	}
+}
+
+// setHotkeyCallback sets the function to be called when the hotkey is pressed.
+func setHotkeyCallback(cb func()) {
+	hotkeyCallbackMu.Lock()
+	hotkeyCallback = cb
+	hotkeyCallbackMu.Unlock()
 }
 
 func getForegroundWindow() windows.Handle {
@@ -1711,10 +1821,13 @@ func main() {
 
 	//bottom/footer section
 	//bottom left: delay label + checkbox + action buttons + status
+	hotkeyInfoLabel := widget.NewLabel("")
+	hotkeyInfoLabel.TextStyle = fyne.TextStyle{Italic: true}
 	bottom_left := container.NewVBox(
 		delayLabel,
 		actionContainer,
 		statusLabel,
+		hotkeyInfoLabel,
 	)
 	// bottom right: language selector + version
 	bottom_right := container.NewVBox(
@@ -1752,6 +1865,7 @@ func main() {
 		abortFocusCheck.SetText(labels.AbortOnFocusChange)
 		customMsEntry.SetPlaceHolder(labels.CustomMsPlaceholder)
 		windowSelect.PlaceHolder = labels.WindowPlaceholder
+		hotkeyInfoLabel.SetText(labels.HotkeyInfo)
 		windowSelect.Refresh()
 		refreshSpeedSelectOptions(labels)
 		refreshCompatibilitySelectOptions(labels)
@@ -1774,6 +1888,37 @@ func main() {
 	}
 
 	applyLanguageSelection()
+
+	// Register global hotkey (Ctrl+G) for "Type Clipboard"
+	if err := registerHotkey(); err != nil {
+		// If hotkey registration fails, just log a warning
+		// The app should still work normally via UI buttons
+		fmt.Fprintf(os.Stderr, "Warning: Failed to register hotkey Ctrl+G: %v\n", err)
+	} else {
+		// Set up hotkey callback to trigger typeClipboardBtn
+		setHotkeyCallback(func() {
+			if typeClipboardBtn != nil {
+				// Only trigger if not already typing
+				typingMu.Lock()
+				isTyping := typingStopRequested
+				typingMu.Unlock()
+				
+				if !isTyping {
+					// Simulate clicking the Type Clipboard button
+					typeClipboardBtn.OnTapped()
+				}
+			}
+		})
+		
+		// Start hotkey listener in background
+		go startHotkeyListener()
+		
+		// Ensure cleanup on exit
+		defer func() {
+			stopHotkeyListener()
+			unregisterHotkey()
+		}()
+	}
 
 	updateDelayLabel()
 	refreshWindows()
