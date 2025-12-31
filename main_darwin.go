@@ -1043,6 +1043,7 @@ func main() {
 	// --- Typing state / stop handling ---
 	var typingMu sync.Mutex
 	typingStopRequested := false
+	isCurrentlyTyping := false
 
 	setStopRequested := func(v bool) {
 		typingMu.Lock()
@@ -1053,6 +1054,19 @@ func main() {
 	shouldStop := func() bool {
 		typingMu.Lock()
 		v := typingStopRequested
+		typingMu.Unlock()
+		return v
+	}
+
+	setTypingState := func(typing bool) {
+		typingMu.Lock()
+		isCurrentlyTyping = typing
+		typingMu.Unlock()
+	}
+
+	getTypingState := func() bool {
+		typingMu.Lock()
+		v := isCurrentlyTyping
 		typingMu.Unlock()
 		return v
 	}
@@ -1136,6 +1150,7 @@ func main() {
 
 		perChar := getPerCharDelay(txt)
 		setStopRequested(false)
+		setTypingState(true)
 		setTypingUI(true)
 		status.SetText("Typing...")
 
@@ -1151,6 +1166,7 @@ func main() {
 				} else {
 					status.SetText("Typed to: " + targetTitle)
 				}
+				setTypingState(false)
 				setTypingUI(false)
 				setStopRequested(false)
 			})
@@ -1206,6 +1222,7 @@ func main() {
 
 		perChar := getPerCharDelay(txt)
 		setStopRequested(false)
+		setTypingState(true)
 		setTypingUI(true)
 		status.SetText("Typing clipboard...")
 
@@ -1221,6 +1238,7 @@ func main() {
 				} else {
 					status.SetText("Typed clipboard to: " + targetTitle)
 				}
+				setTypingState(false)
 				setTypingUI(false)
 				setStopRequested(false)
 			})
@@ -1275,23 +1293,23 @@ func main() {
 		setMacHotkeyCallback(func() {
 			if typeClipboardBtn != nil {
 				// Only trigger if not already typing
-				typingMu.Lock()
-				isTyping := typingStopRequested
-				typingMu.Unlock()
-
-				if !isTyping {
+				if !getTypingState() {
 					// Simulate clicking the Type Clipboard button
 					typeClipboardBtn.OnTapped()
 				}
 			}
 		})
-		
-		// Ensure cleanup on exit
-		defer C.unregisterHotkey()
 	}
+	
+	// Set up cleanup handler for window close
+	w.SetCloseIntercept(func() {
+		// Cleanup hotkey registration
+		C.unregisterHotkey()
+		// Stop the polling goroutine
+		close(stopPolling)
+		// Close the window
+		w.Close()
+	})
 
 	w.ShowAndRun()
-
-	// Cleanup
-	close(stopPolling)
 }

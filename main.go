@@ -1105,6 +1105,15 @@ func main() {
 
 	w := myApp.NewWindow("goclip")
 	w.Resize(fyne.NewSize(800, 460))
+	
+	// Set up cleanup handler for window close
+	w.SetCloseIntercept(func() {
+		// Cleanup hotkey listener and registration
+		stopHotkeyListener()
+		unregisterHotkey()
+		// Close the window
+		w.Close()
+	})
 
 	// also set it on the window explicitly
 	if res := loadAppIcon(); res != nil {
@@ -1538,6 +1547,7 @@ func main() {
 	// --- Typing state / stop handling ---
 	var typingMu sync.Mutex
 	typingStopRequested := false
+	isCurrentlyTyping := false
 
 	setStopRequested := func(v bool) {
 		typingMu.Lock()
@@ -1548,6 +1558,19 @@ func main() {
 	shouldStop := func() bool {
 		typingMu.Lock()
 		v := typingStopRequested
+		typingMu.Unlock()
+		return v
+	}
+
+	setTypingState := func(typing bool) {
+		typingMu.Lock()
+		isCurrentlyTyping = typing
+		typingMu.Unlock()
+	}
+
+	getTypingState := func() bool {
+		typingMu.Lock()
+		v := isCurrentlyTyping
 		typingMu.Unlock()
 		return v
 	}
@@ -1626,6 +1649,7 @@ func main() {
 		useModifierCompat := resolveModifierCompatibility(hwnd, currentCompatibilitySetting)
 		perChar := getPerCharDelay(txt)
 		setStopRequested(false)
+		setTypingState(true)
 		setTypingUI(true)
 		statusCtrl.Set(statusKeyTyping)
 
@@ -1661,6 +1685,7 @@ func main() {
 				} else {
 					statusCtrl.Set(statusKeyTypedTo, title)
 				}
+				setTypingState(false)
 				setTypingUI(false)
 				setStopRequested(false)
 			})
@@ -1705,6 +1730,7 @@ func main() {
 		useModifierCompat := resolveModifierCompatibility(hwnd, currentCompatibilitySetting)
 		perChar := getPerCharDelay(txt)
 		setStopRequested(false)
+		setTypingState(true)
 		setTypingUI(true)
 		statusCtrl.Set(statusKeyTypingClipboard)
 
@@ -1740,6 +1766,7 @@ func main() {
 				} else {
 					statusCtrl.Set(statusKeyTypedClipboard, title)
 				}
+				setTypingState(false)
 				setTypingUI(false)
 				setStopRequested(false)
 			})
@@ -1899,11 +1926,7 @@ func main() {
 		setHotkeyCallback(func() {
 			if typeClipboardBtn != nil {
 				// Only trigger if not already typing
-				typingMu.Lock()
-				isTyping := typingStopRequested
-				typingMu.Unlock()
-				
-				if !isTyping {
+				if !getTypingState() {
 					// Simulate clicking the Type Clipboard button
 					typeClipboardBtn.OnTapped()
 				}
@@ -1912,12 +1935,6 @@ func main() {
 		
 		// Start hotkey listener in background
 		go startHotkeyListener()
-		
-		// Ensure cleanup on exit
-		defer func() {
-			stopHotkeyListener()
-			unregisterHotkey()
-		}()
 	}
 
 	updateDelayLabel()
