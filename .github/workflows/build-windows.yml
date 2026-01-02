@@ -16,9 +16,10 @@ permissions:
   contents: write
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
-
+  get-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.semrel.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,6 +32,15 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           prerelease: ${{ github.ref_name == 'development' }}
+
+  build-windows:
+    needs: get-version
+    if: needs.get-version.outputs.version != ''
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v4
@@ -56,13 +66,8 @@ jobs:
           echo "GOOS=windows" >> $Env:GITHUB_ENV
           echo "GOARCH=amd64" >> $Env:GITHUB_ENV
           echo "CC=x86_64-w64-mingw32-gcc" >> $Env:GITHUB_ENV
-          if ("${{ steps.semrel.outputs.version }}" -ne "") {
-            $v = "v${{ steps.semrel.outputs.version }}"
-          } else {
-            $sha = "${{ github.sha }}".Substring(0,7)
-            $v = "dev-$sha"
-          }
-          echo "APP_VERSION=$v" >> $Env:GITHUB_ENV
+          # Use the version output from the previous job
+          echo "APP_VERSION=v${{ needs.get-version.outputs.version }}" >> $Env:GITHUB_ENV
 
       - name: Get Go bin path
         id: go-bin
@@ -87,7 +92,7 @@ jobs:
           if (-not (Test-Path $gv)) { throw "goversioninfo not found at $gv" }
           Get-ChildItem -Filter "resource*.syso" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
           $raw = "${Env:APP_VERSION}".TrimStart('v')
-          if ($raw -match '^(\d+)\.(\d+)\.(\d+)$') {
+          if ($raw -match '^(\d+)\.(\d+)\.(\d+)') {
             $ver = "$($Matches[1]).$($Matches[2]).$($Matches[3]).0"
           } else {
             $ver = "0.0.0.0"
@@ -125,15 +130,14 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub Release (tagged)
-        if: steps.semrel.outputs.version != ''
         uses: ncipollo/release-action@v1
         with:
           artifacts: |
             dist/goclip-windows-amd64.exe
             dist/goclip-${Env:APP_VERSION}-windows-amd64.exe
             dist/goclip-${Env:APP_VERSION}-windows-amd64.zip
-          tag: v${{ steps.semrel.outputs.version }}
-          name: v${{ steps.semrel.outputs.version }}
+          tag: v${{ needs.get-version.outputs.version }}
+          name: v${{ needs.get-version.outputs.version }}
           allowUpdates: true
           replacesArtifacts: true
           generateReleaseNotes: true
