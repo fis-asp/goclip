@@ -125,17 +125,18 @@ jobs:
           name: goclip-${{ env.APP_VERSION }}-windows-amd64
           path: |
             dist/goclip-windows-amd64.exe
-            dist/goclip-${Env:APP_VERSION}-windows-amd64.exe
-            dist/goclip-${Env:APP_VERSION}-windows-amd64.zip
+            dist/goclip-${{ env.APP_VERSION }}-windows-amd64.exe
+            dist/goclip-${{ env.APP_VERSION }}-windows-amd64.zip
           if-no-files-found: error
+
 
       - name: Publish GitHub Release (tagged)
         uses: ncipollo/release-action@v1
         with:
           artifacts: |
             dist/goclip-windows-amd64.exe
-            dist/goclip-${Env:APP_VERSION}-windows-amd64.exe
-            dist/goclip-${Env:APP_VERSION}-windows-amd64.zip
+            dist/goclip-${{ env.APP_VERSION }}-windows-amd64.exe
+            dist/goclip-${{ env.APP_VERSION }}-windows-amd64.zip
           tag: v${{ needs.get-version.outputs.version }}
           name: v${{ needs.get-version.outputs.version }}
           allowUpdates: true
