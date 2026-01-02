@@ -2,15 +2,14 @@ name: Build goclip (Windows)
 
 on:
   push:
-    branches: [ "**" ]
-    tags: [ "v*" ]
+    branches:
+      - main
+      - development
     paths:
       - '**.go'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/build-windows.yml'
-  pull_request:
-    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
@@ -23,6 +22,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Semantic Release
+        id: semrel
+        uses: go-semantic-release/action@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          prerelease: ${{ github.ref_name == 'development' }}
 
       - name: Set up Go
         uses: actions/setup-go@v4
@@ -48,8 +56,8 @@ jobs:
           echo "GOOS=windows" >> $Env:GITHUB_ENV
           echo "GOARCH=amd64" >> $Env:GITHUB_ENV
           echo "CC=x86_64-w64-mingw32-gcc" >> $Env:GITHUB_ENV
-          if ("${{ github.ref_type }}" -eq "tag") {
-            $v = "${{ github.ref_name }}"
+          if ("${{ steps.semrel.outputs.version }}" -ne "") {
+            $v = "v${{ steps.semrel.outputs.version }}"
           } else {
             $sha = "${{ github.sha }}".Substring(0,7)
             $v = "dev-$sha"
@@ -112,20 +120,20 @@ jobs:
           name: goclip-${{ env.APP_VERSION }}-windows-amd64
           path: |
             dist/goclip-windows-amd64.exe
-            dist/goclip-${{ env.APP_VERSION }}-windows-amd64.exe
-            dist/goclip-${{ env.APP_VERSION }}-windows-amd64.zip
+            dist/goclip-${Env:APP_VERSION}-windows-amd64.exe
+            dist/goclip-${Env:APP_VERSION}-windows-amd64.zip
           if-no-files-found: error
 
       - name: Publish GitHub Release (tagged)
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.semrel.outputs.version != ''
         uses: ncipollo/release-action@v1
         with:
           artifacts: |
             dist/goclip-windows-amd64.exe
-            dist/goclip-${{ env.APP_VERSION }}-windows-amd64.exe
-            dist/goclip-${{ env.APP_VERSION }}-windows-amd64.zip
-          tag: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+            dist/goclip-${Env:APP_VERSION}-windows-amd64.exe
+            dist/goclip-${Env:APP_VERSION}-windows-amd64.zip
+          tag: v${{ steps.semrel.outputs.version }}
+          name: v${{ steps.semrel.outputs.version }}
           allowUpdates: true
           replacesArtifacts: true
           generateReleaseNotes: true
