@@ -2,22 +2,40 @@ name: Build goclip (Windows)
 
 on:
   push:
-    branches: [ "**" ]
-    tags: [ "v*" ]
+    branches:
+      - main
+      - development
     paths:
       - '**.go'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/build-windows.yml'
-  pull_request:
-    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  get-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.semrel.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Semantic Release
+        id: semrel
+        uses: go-semantic-release/action@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          prerelease: ${{ github.ref_name == 'development' }}
+
   build-windows:
+    needs: get-version
+    if: needs.get-version.outputs.version != ''
     runs-on: windows-latest
 
     steps:
@@ -48,13 +66,8 @@ jobs:
           echo "GOOS=windows" >> $Env:GITHUB_ENV
           echo "GOARCH=amd64" >> $Env:GITHUB_ENV
           echo "CC=x86_64-w64-mingw32-gcc" >> $Env:GITHUB_ENV
-          if ("${{ github.ref_type }}" -eq "tag") {
-            $v = "${{ github.ref_name }}"
-          } else {
-            $sha = "${{ github.sha }}".Substring(0,7)
-            $v = "dev-$sha"
-          }
-          echo "APP_VERSION=$v" >> $Env:GITHUB_ENV
+          # Use the version output from the previous job
+          echo "APP_VERSION=v${{ needs.get-version.outputs.version }}" >> $Env:GITHUB_ENV
 
       - name: Get Go bin path
         id: go-bin
@@ -79,7 +92,7 @@ jobs:
           if (-not (Test-Path $gv)) { throw "goversioninfo not found at $gv" }
           Get-ChildItem -Filter "resource*.syso" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
           $raw = "${Env:APP_VERSION}".TrimStart('v')
-          if ($raw -match '^(\d+)\.(\d+)\.(\d+)$') {
+          if ($raw -match '^(\d+)\.(\d+)\.(\d+)') {
             $ver = "$($Matches[1]).$($Matches[2]).$($Matches[3]).0"
           } else {
             $ver = "0.0.0.0"
@@ -112,20 +125,19 @@ jobs:
           name: goclip-${{ env.APP_VERSION }}-windows-amd64
           path: |
             dist/goclip-windows-amd64.exe
-            dist/goclip-${{ env.APP_VERSION }}-windows-amd64.exe
-            dist/goclip-${{ env.APP_VERSION }}-windows-amd64.zip
+            dist/goclip-${Env:APP_VERSION}-windows-amd64.exe
+            dist/goclip-${Env:APP_VERSION}-windows-amd64.zip
           if-no-files-found: error
 
       - name: Publish GitHub Release (tagged)
-        if: startsWith(github.ref, 'refs/tags/')
         uses: ncipollo/release-action@v1
         with:
           artifacts: |
             dist/goclip-windows-amd64.exe
-            dist/goclip-${{ env.APP_VERSION }}-windows-amd64.exe
-            dist/goclip-${{ env.APP_VERSION }}-windows-amd64.zip
-          tag: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+            dist/goclip-${Env:APP_VERSION}-windows-amd64.exe
+            dist/goclip-${Env:APP_VERSION}-windows-amd64.zip
+          tag: v${{ needs.get-version.outputs.version }}
+          name: v${{ needs.get-version.outputs.version }}
           allowUpdates: true
           replacesArtifacts: true
           generateReleaseNotes: true
