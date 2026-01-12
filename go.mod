@@ -3,13 +3,13 @@ module goclip
 go 1.24.6
 
 require (
-	fyne.io/fyne/v2 v2.7.1
+	fyne.io/fyne/v2 v2.7.2
 	github.com/jeandeaual/go-locale v0.0.0-20250612000132-0ef82f21eade
 	golang.org/x/sys v0.39.0
 )
 
 require (
-	fyne.io/systray v1.11.1-0.20250603113521-ca66a66d8b58 // indirect
+	fyne.io/systray v1.12.0 // indirect
 	github.com/BurntSushi/toml v1.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/fredbi/uri v1.1.1 // indirect
