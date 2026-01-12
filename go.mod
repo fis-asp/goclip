@@ -5,7 +5,7 @@ go 1.24.6
 require (
 	fyne.io/fyne/v2 v2.7.1
 	github.com/jeandeaual/go-locale v0.0.0-20250612000132-0ef82f21eade
-	golang.org/x/sys v0.39.0
+	golang.org/x/sys v0.40.0
 )
 
 require (
