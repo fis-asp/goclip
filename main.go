@@ -251,6 +251,8 @@ var (
 	procGetKeyboardLayout        = user32.NewProc("GetKeyboardLayout")
 	procGetWindowThreadProcessId = user32.NewProc("GetWindowThreadProcessId")
 	procGetForegroundWindow      = user32.NewProc("GetForegroundWindow")
+	procSetWindowPos             = user32.NewProc("SetWindowPos")
+	procFindWindowW              = user32.NewProc("FindWindowW")
 
 	procQueryFullProcessImageNameW = kernel32.NewProc("QueryFullProcessImageNameW")
 )
@@ -272,6 +274,13 @@ const (
 	mapvkVKToVSC = 0
 
 	processQueryLimitedInformation = 0x1000
+
+	// SetWindowPos flags
+	swpNoSize         = 0x0001
+	swpNoMove         = 0x0002
+	swpNoActivate     = 0x0010
+	hwndTopmost       = ^uintptr(0) // -1 (HWND_TOPMOST)
+	hwndNoTopmost     = ^uintptr(1) // -2 (HWND_NOTOPMOST)
 )
 
 // ---------- Ignore lists (lowercased) ----------
@@ -452,6 +461,29 @@ func stopForegroundWatcher() {
 
 func getForegroundWindow() windows.Handle {
 	r, _, _ := procGetForegroundWindow.Call()
+	return windows.Handle(r)
+}
+
+// setWindowAlwaysOnTop sets the given window handle to always on top or removes that state
+func setWindowAlwaysOnTop(hwnd windows.Handle, topmost bool) {
+	var insertAfter uintptr
+	if topmost {
+		insertAfter = hwndTopmost
+	} else {
+		insertAfter = hwndNoTopmost
+	}
+	procSetWindowPos.Call(
+		uintptr(hwnd),
+		insertAfter,
+		0, 0, 0, 0,
+		uintptr(swpNoMove|swpNoSize|swpNoActivate),
+	)
+}
+
+// findWindowByTitle finds a window by its title (exact match)
+func findWindowByTitle(title string) windows.Handle {
+	ptr, _ := windows.UTF16PtrFromString(title)
+	r, _, _ := procFindWindowW.Call(0, uintptr(unsafe.Pointer(ptr)))
 	return windows.Handle(r)
 }
 
@@ -1480,6 +1512,30 @@ func main() {
 	})
 	abortFocusCheck.SetChecked(cfg.AbortOnFocusChange)
 
+	// always on top flag and checkbox
+	var applyAlwaysOnTop func(bool)
+	alwaysOnTopCheck := widget.NewCheck("", nil)
+	applyAlwaysOnTop = func(topmost bool) {
+		// Find our own window by title and apply always on top setting
+		// We need to do this on the main thread after the window is created
+		go func() {
+			// Small delay to ensure the window title is set
+			time.Sleep(50 * time.Millisecond)
+			hwnd := findWindowByTitle(w.Title())
+			if hwnd != 0 {
+				setWindowAlwaysOnTop(hwnd, topmost)
+			}
+		}()
+	}
+	alwaysOnTopCheck.OnChanged = func(b bool) {
+		applyAlwaysOnTop(b)
+	}
+	alwaysOnTopCheck.SetChecked(cfg.AlwaysOnTop)
+	// Apply initial always on top setting
+	if cfg.AlwaysOnTop {
+		// Set window to always on top on startup
+	}
+
 	var typeBtn *widget.Button
 	var typeClipboardBtn *widget.Button
 	var stopBtn *widget.Button
@@ -1837,6 +1893,10 @@ func main() {
 		settingsAbortFocusCheck := widget.NewCheck(labels.SettingsAbortFocusLabel, nil)
 		settingsAbortFocusCheck.SetChecked(currentCfg.AbortOnFocusChange)
 
+		// Always on top checkbox
+		settingsAlwaysOnTopCheck := widget.NewCheck(labels.SettingsAlwaysOnTopLabel, nil)
+		settingsAlwaysOnTopCheck.SetChecked(currentCfg.AlwaysOnTop)
+
 		// Language selector
 		settingsLanguageSelect := widget.NewSelect(languageSelect.Options, nil)
 		settingsLanguageLabelToCode := make(map[string]string)
@@ -1870,6 +1930,7 @@ func main() {
 				CompatibilityMode:  config.CompatibilityMode(settingsCurrentCompatMode),
 				AbortOnFocusChange: settingsAbortFocusCheck.Checked,
 				Language:           settingsLanguageLabelToCode[settingsLanguageSelect.Selected],
+				AlwaysOnTop:        settingsAlwaysOnTopCheck.Checked,
 			}
 
 			// Parse custom speed if custom is selected
@@ -1915,6 +1976,10 @@ func main() {
 
 			abortOnFocusChange = newCfg.AbortOnFocusChange
 			abortFocusCheck.SetChecked(newCfg.AbortOnFocusChange)
+
+			// Apply always on top setting
+			alwaysOnTopCheck.SetChecked(newCfg.AlwaysOnTop)
+			applyAlwaysOnTop(newCfg.AlwaysOnTop)
 
 			// Apply language change
 			selectedLanguageCode = newCfg.Language
@@ -1971,6 +2036,10 @@ func main() {
 						abortOnFocusChange = cfg.AbortOnFocusChange
 						abortFocusCheck.SetChecked(cfg.AbortOnFocusChange)
 
+						// Reset always on top
+						alwaysOnTopCheck.SetChecked(cfg.AlwaysOnTop)
+						applyAlwaysOnTop(cfg.AlwaysOnTop)
+
 						selectedLanguageCode = cfg.Language
 						applyLanguageSelection()
 
@@ -1999,6 +2068,7 @@ func main() {
 			widget.NewSeparator(),
 
 			settingsAbortFocusCheck,
+			settingsAlwaysOnTopCheck,
 			widget.NewSeparator(),
 
 			widget.NewLabelWithStyle(labels.SettingsLanguageLabel, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
@@ -2020,6 +2090,7 @@ func main() {
 	// bottom right: language selector + version + settings button
 	bottom_right := container.NewVBox(
 		abortFocusCheck,
+		alwaysOnTopCheck,
 		languageHeadingLabel,
 		languageSelect,
 		settingsBtn,
@@ -2053,6 +2124,7 @@ func main() {
 		stopBtn.SetText(labels.StopButton)
 		settingsBtn.SetText(labels.SettingsButton)
 		abortFocusCheck.SetText(labels.AbortOnFocusChange)
+		alwaysOnTopCheck.SetText(labels.AlwaysOnTop)
 		customMsEntry.SetPlaceHolder(labels.CustomMsPlaceholder)
 		windowSelect.PlaceHolder = labels.WindowPlaceholder
 		windowSelect.Refresh()
@@ -2080,5 +2152,11 @@ func main() {
 
 	updateDelayLabel()
 	refreshWindows()
+
+	// Apply initial always on top setting after window is shown
+	if cfg.AlwaysOnTop {
+		applyAlwaysOnTop(true)
+	}
+
 	w.ShowAndRun()
 }

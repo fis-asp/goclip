@@ -44,6 +44,9 @@ type Config struct {
 
 	// Interface language (empty = auto/system)
 	Language string `json:"language"`
+
+	// Always on top window setting
+	AlwaysOnTop bool `json:"alwaysOnTop"`
 }
 
 // DefaultConfig returns the default configuration
@@ -55,6 +58,7 @@ func DefaultConfig() Config {
 		CompatibilityMode:  CompatibilityAuto,
 		AbortOnFocusChange: true,
 		Language:           "",
+		AlwaysOnTop:        false,
 	}
 }
 
@@ -216,4 +220,11 @@ func GetLanguage() string {
 	configMu.RLock()
 	defer configMu.RUnlock()
 	return current.Language
+}
+
+// GetAlwaysOnTop returns the configured always on top setting
+func GetAlwaysOnTop() bool {
+	configMu.RLock()
+	defer configMu.RUnlock()
+	return current.AlwaysOnTop
 }

@@ -74,6 +74,10 @@ type LabelSet struct {
 	SettingsResetButton         string
 	SettingsResetConfirmTitle   string
 	SettingsResetConfirmMessage string
+	SettingsAlwaysOnTopLabel    string
+
+	// Always on top
+	AlwaysOnTop string
 }
 
 type LanguageMetadata struct {
@@ -159,6 +163,10 @@ var (
 				SettingsResetButton:         "Reset to Defaults",
 				SettingsResetConfirmTitle:   "Reset Settings",
 				SettingsResetConfirmMessage: "Are you sure you want to reset all settings to their default values?",
+				SettingsAlwaysOnTopLabel:    "Always on top by default",
+
+				// Always on top
+				AlwaysOnTop: "Always on top",
 			},
 		},
 		{
@@ -231,6 +239,10 @@ var (
 				SettingsResetButton:         "Auf Standard zurücksetzen",
 				SettingsResetConfirmTitle:   "Einstellungen zurücksetzen",
 				SettingsResetConfirmMessage: "Möchten Sie wirklich alle Einstellungen auf die Standardwerte zurücksetzen?",
+				SettingsAlwaysOnTopLabel:    "Standardmäßig immer im Vordergrund",
+
+				// Always on top
+				AlwaysOnTop: "Immer im Vordergrund",
 			},
 		},
 	}
