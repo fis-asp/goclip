@@ -1,11 +1,11 @@
 module goclip
 
-go 1.24.6
+go 1.25.0
 
 require (
 	fyne.io/fyne/v2 v2.7.3
 	github.com/jeandeaual/go-locale v0.0.0-20250612000132-0ef82f21eade
-	golang.org/x/sys v0.41.0
+	golang.org/x/sys v0.42.0
 )
 
 require (
