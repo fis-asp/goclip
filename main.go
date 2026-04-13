@@ -1341,7 +1341,7 @@ func main() {
 	inputRow := container.NewBorder(nil, nil, nil, eyeBtn, inputEntry)
 
 	statusLabel := widget.NewLabel("")
-	statusLabel.Wrapping = fyne.TextWrapWord
+	statusLabel.Truncation = fyne.TextTruncateEllipsis
 	statusCtrl := newStatusController(statusLabel)
 
 	layoutSelect := widget.NewSelect([]string{
