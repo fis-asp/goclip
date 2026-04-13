@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -276,11 +277,11 @@ const (
 	processQueryLimitedInformation = 0x1000
 
 	// SetWindowPos flags
-	swpNoSize         = 0x0001
-	swpNoMove         = 0x0002
-	swpNoActivate     = 0x0010
-	hwndTopmost       = ^uintptr(0) // -1 (HWND_TOPMOST)
-	hwndNoTopmost     = ^uintptr(1) // -2 (HWND_NOTOPMOST)
+	swpNoSize     = 0x0001
+	swpNoMove     = 0x0002
+	swpNoActivate = 0x0010
+	hwndTopmost   = ^uintptr(0) // -1 (HWND_TOPMOST)
+	hwndNoTopmost = ^uintptr(1) // -2 (HWND_NOTOPMOST)
 )
 
 // ---------- Ignore lists (lowercased) ----------
@@ -457,6 +458,240 @@ func stopForegroundWatcher() {
 		foregroundEventHook = 0
 	}
 	foregroundCallbackRef = 0
+}
+
+// ------------------------- Global Hotkey Support -------------------------
+//
+// Uses Windows RegisterHotKey API for global hotkey registration.
+// Only the registered key combination triggers the callback.
+//
+
+var (
+	procRegisterHotKey     = user32.NewProc("RegisterHotKey")
+	procUnregisterHotKey   = user32.NewProc("UnregisterHotKey")
+	procPeekMessageW       = user32.NewProc("PeekMessageW")
+	procPostThreadMessageW = user32.NewProc("PostThreadMessageW")
+
+	hotkeyListenerDone chan struct{}
+	hotkeyThreadID     uint32
+	hotkeyMu           sync.Mutex
+
+	// Track which hotkeys are registered
+	hotkeyClipboardRegistered bool
+	hotkeyTextRegistered      bool
+)
+
+const (
+	modAlt     = 0x0001
+	modControl = 0x0002
+	modShift   = 0x0004
+	modNoRep   = 0x4000 // prevent repeated hotkey messages while held
+
+	wmHotkey          = 0x0312
+	wmQuit            = 0x0012
+	pmRemove          = 0x0001
+	hotkeyIDClipboard = 1 // ID for clipboard hotkey
+	hotkeyIDText      = 2 // ID for text hotkey
+)
+
+// hotkeyModifierToFlags converts our string modifier format to Windows flags
+func hotkeyModifierToFlags(modifier string) uint32 {
+	var flags uint32 = modNoRep // always prevent repeat
+	switch modifier {
+	case "ctrl+alt":
+		flags |= modControl | modAlt
+	case "ctrl+shift":
+		flags |= modControl | modShift
+	case "alt+shift":
+		flags |= modAlt | modShift
+	case "ctrl+alt+shift":
+		flags |= modControl | modAlt | modShift
+	default:
+		flags |= modControl | modAlt // default
+	}
+	return flags
+}
+
+// hotkeyKeyToVK converts a key string to Windows virtual key code
+func hotkeyKeyToVK(key string) uint32 {
+	if len(key) == 1 {
+		r := rune(key[0])
+		// Letters A-Z
+		if r >= 'A' && r <= 'Z' {
+			return uint32(r)
+		}
+		if r >= 'a' && r <= 'z' {
+			return uint32(r - 32) // convert to uppercase VK
+		}
+		// Digits 0-9
+		if r >= '0' && r <= '9' {
+			return uint32(r)
+		}
+	}
+	// Default to 'V' if invalid
+	return uint32('V')
+}
+
+type msg struct {
+	Hwnd    uintptr
+	Message uint32
+	WParam  uintptr
+	LParam  uintptr
+	Time    uint32
+	Pt      struct{ X, Y int32 }
+}
+
+// Hotkey callbacks
+var (
+	hotkeyClipboardCallback func()
+	hotkeyTextCallback      func()
+)
+
+// registerHotkeyWithID registers a hotkey with a specific ID
+func registerHotkeyWithID(id uintptr, modifier string, key string) error {
+	modFlags := hotkeyModifierToFlags(modifier)
+	vk := hotkeyKeyToVK(key)
+
+	r, _, err := procRegisterHotKey.Call(0, id, uintptr(modFlags), uintptr(vk))
+	if r == 0 {
+		return fmt.Errorf("RegisterHotKey failed for ID %d: %v", id, err)
+	}
+	return nil
+}
+
+// unregisterHotkeyWithID unregisters a hotkey with a specific ID
+func unregisterHotkeyWithID(id uintptr) {
+	procUnregisterHotKey.Call(0, id)
+}
+
+// startHotkeyListener starts the hotkey listener for both hotkeys
+func startHotkeyListener(
+	clipboardCfg config.HotkeyConfig, clipboardCallback func(),
+	textCfg config.HotkeyConfig, textCallback func(),
+) error {
+	stopHotkeyListener()
+
+	// Check if at least one hotkey is enabled
+	if !clipboardCfg.Enabled && !textCfg.Enabled {
+		return nil
+	}
+
+	hotkeyListenerDone = make(chan struct{})
+	errChan := make(chan error, 1)
+
+	// Store callbacks
+	hotkeyClipboardCallback = clipboardCallback
+	hotkeyTextCallback = textCallback
+
+	go func() {
+		// Lock this goroutine to the current OS thread.
+		// This is CRITICAL for Windows hotkey registration:
+		// - RegisterHotKey must be called on a thread with a message queue
+		// - The message loop must run on the same thread that registered the hotkey
+		// - PostThreadMessage sends messages to a specific thread's queue
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		defer close(hotkeyListenerDone)
+
+		// Store current thread ID for posting quit message later
+		hotkeyMu.Lock()
+		hotkeyThreadID = windows.GetCurrentThreadId()
+		hotkeyMu.Unlock()
+
+		// Register clipboard hotkey if enabled
+		if clipboardCfg.Enabled {
+			if err := registerHotkeyWithID(hotkeyIDClipboard, clipboardCfg.Modifier, clipboardCfg.Key); err != nil {
+				errChan <- err
+				return
+			}
+			hotkeyClipboardRegistered = true
+		}
+
+		// Register text hotkey if enabled
+		if textCfg.Enabled {
+			if err := registerHotkeyWithID(hotkeyIDText, textCfg.Modifier, textCfg.Key); err != nil {
+				// Unregister clipboard hotkey if text registration fails
+				if hotkeyClipboardRegistered {
+					unregisterHotkeyWithID(hotkeyIDClipboard)
+					hotkeyClipboardRegistered = false
+				}
+				errChan <- err
+				return
+			}
+			hotkeyTextRegistered = true
+		}
+
+		errChan <- nil
+
+		// Message loop
+		var m msg
+		for {
+			r, _, _ := procPeekMessageW.Call(
+				uintptr(unsafe.Pointer(&m)),
+				0, 0, 0,
+				uintptr(pmRemove),
+			)
+
+			if r != 0 {
+				if m.Message == wmQuit {
+					break
+				}
+				if m.Message == wmHotkey {
+					switch m.WParam {
+					case hotkeyIDClipboard:
+						if hotkeyClipboardCallback != nil {
+							hotkeyClipboardCallback()
+						}
+					case hotkeyIDText:
+						if hotkeyTextCallback != nil {
+							hotkeyTextCallback()
+						}
+					}
+				}
+			} else {
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+
+		// Unregister hotkeys on the same thread
+		hotkeyMu.Lock()
+		if hotkeyClipboardRegistered {
+			unregisterHotkeyWithID(hotkeyIDClipboard)
+			hotkeyClipboardRegistered = false
+		}
+		if hotkeyTextRegistered {
+			unregisterHotkeyWithID(hotkeyIDText)
+			hotkeyTextRegistered = false
+		}
+		hotkeyMu.Unlock()
+	}()
+
+	return <-errChan
+}
+
+// stopHotkeyListener stops the hotkey listener goroutine
+func stopHotkeyListener() {
+	hotkeyMu.Lock()
+	threadID := hotkeyThreadID
+	done := hotkeyListenerDone
+	hotkeyMu.Unlock()
+
+	if done == nil {
+		return
+	}
+
+	if threadID != 0 {
+		procPostThreadMessageW.Call(uintptr(threadID), wmQuit, 0, 0)
+	}
+
+	<-done
+
+	hotkeyMu.Lock()
+	hotkeyListenerDone = nil
+	hotkeyThreadID = 0
+	hotkeyClipboardCallback = nil
+	hotkeyTextCallback = nil
+	hotkeyMu.Unlock()
 }
 
 func getForegroundWindow() windows.Handle {
@@ -1004,6 +1239,44 @@ func loadAppIcon() fyne.Resource {
 		return fyne.NewStaticResource("app.ico", data)
 	}
 	return nil
+}
+
+// Global variables to hold the type actions (set in main)
+var (
+	triggerTypeClipboard func()
+	triggerTypeText      func()
+)
+
+// applyHotkeySettings registers or unregisters the global hotkeys based on config
+func applyHotkeySettings(clipboardCfg, textCfg config.HotkeyConfig) {
+	stopHotkeyListener()
+
+	if !clipboardCfg.Enabled && !textCfg.Enabled {
+		return
+	}
+
+	err := startHotkeyListener(
+		clipboardCfg, func() {
+			if triggerTypeClipboard != nil {
+				fyne.Do(func() {
+					time.Sleep(1 * time.Second)
+					triggerTypeClipboard()
+				})
+			}
+		},
+		textCfg, func() {
+			if triggerTypeText != nil {
+				fyne.Do(func() {
+					time.Sleep(1 * time.Second)
+					triggerTypeText()
+				})
+			}
+		},
+	)
+	if err != nil {
+		// Hotkey registration failed - continue without hotkeys
+		_ = err
+	}
 }
 
 func main() {
@@ -1723,6 +1996,15 @@ func main() {
 		}(hwnd, curTitle, txt, perChar, useModifierCompat)
 	})
 
+	// Set the global trigger function for hotkey support
+	triggerTypeClipboard = func() {
+		typeClipboardBtn.OnTapped()
+	}
+
+	triggerTypeText = func() {
+		typeBtn.OnTapped()
+	}
+
 	// Action container that switches between [Type, Type Clipboard] and [Stop]
 	actionContainer = container.NewHBox(typeBtn, typeClipboardBtn)
 
@@ -1733,11 +2015,10 @@ func main() {
 	compatibilityModeLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	textToTypeLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
-	// Version label + languageselector in bottom right
+	// Version label in bottom right
 	versionLabel := widget.NewLabel(Version)
 	versionLabel.TextStyle = fyne.TextStyle{Italic: true}
 	versionLabel.Alignment = fyne.TextAlignTrailing
-	languageHeadingLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
 	// top/header section
 	// left side: window selector + buttons + last active
@@ -1811,7 +2092,7 @@ func main() {
 
 		// Create settings dialog
 		settingsWindow := myApp.NewWindow(labels.SettingsTitle)
-		settingsWindow.Resize(fyne.NewSize(600, 500))
+		settingsWindow.Resize(fyne.NewSize(600, 350))
 
 		// Copy current config
 		currentCfg := config.Get()
@@ -1897,6 +2178,63 @@ func main() {
 		settingsAlwaysOnTopCheck := widget.NewCheck(labels.SettingsAlwaysOnTopLabel, nil)
 		settingsAlwaysOnTopCheck.SetChecked(currentCfg.AlwaysOnTop)
 
+		// --- Hotkey configuration (two hotkeys) ---
+		hotkeyModLabelToValue := map[string]string{
+			labels.HotkeyModCtrlAlt:      "ctrl+alt",
+			labels.HotkeyModCtrlShift:    "ctrl+shift",
+			labels.HotkeyModAltShift:     "alt+shift",
+			labels.HotkeyModCtrlAltShift: "ctrl+alt+shift",
+		}
+		hotkeyModValueToLabel := map[string]string{
+			"ctrl+alt":       labels.HotkeyModCtrlAlt,
+			"ctrl+shift":     labels.HotkeyModCtrlShift,
+			"alt+shift":      labels.HotkeyModAltShift,
+			"ctrl+alt+shift": labels.HotkeyModCtrlAltShift,
+		}
+		modOptions := []string{
+			labels.HotkeyModCtrlAlt,
+			labels.HotkeyModCtrlShift,
+			labels.HotkeyModAltShift,
+			labels.HotkeyModCtrlAltShift,
+		}
+
+		// Helper to create key entry
+		createKeyEntry := func(initial string, placeholder string) *widget.Entry {
+			entry := widget.NewEntry()
+			entry.SetText(initial)
+			entry.SetPlaceHolder(placeholder)
+			entry.OnChanged = func(s string) {
+				if len(s) > 1 {
+					entry.SetText(strings.ToUpper(s[:1]))
+				} else if len(s) == 1 {
+					entry.SetText(strings.ToUpper(s))
+				}
+			}
+			return entry
+		}
+
+		// Clipboard hotkey
+		settingsClipboardHotkeyEnabled := widget.NewCheck(labels.SettingsHotkeyClipboardLabel, nil)
+		settingsClipboardHotkeyEnabled.SetChecked(currentCfg.HotkeyClipboard.Enabled)
+		settingsClipboardModifier := widget.NewSelect(modOptions, nil)
+		if lbl, ok := hotkeyModValueToLabel[currentCfg.HotkeyClipboard.Modifier]; ok {
+			settingsClipboardModifier.SetSelected(lbl)
+		} else {
+			settingsClipboardModifier.SetSelected(labels.HotkeyModCtrlAlt)
+		}
+		settingsClipboardKey := createKeyEntry(currentCfg.HotkeyClipboard.Key, "V")
+
+		// Text hotkey
+		settingsTextHotkeyEnabled := widget.NewCheck(labels.SettingsHotkeyTextLabel, nil)
+		settingsTextHotkeyEnabled.SetChecked(currentCfg.HotkeyText.Enabled)
+		settingsTextModifier := widget.NewSelect(modOptions, nil)
+		if lbl, ok := hotkeyModValueToLabel[currentCfg.HotkeyText.Modifier]; ok {
+			settingsTextModifier.SetSelected(lbl)
+		} else {
+			settingsTextModifier.SetSelected(labels.HotkeyModCtrlAlt)
+		}
+		settingsTextKey := createKeyEntry(currentCfg.HotkeyText.Key, "T")
+
 		// Language selector
 		settingsLanguageSelect := widget.NewSelect(languageSelect.Options, nil)
 		settingsLanguageLabelToCode := make(map[string]string)
@@ -1922,6 +2260,26 @@ func main() {
 
 		// Save button
 		saveBtn := widget.NewButton(labels.SettingsSaveButton, func() {
+			// Get clipboard hotkey values
+			clipboardMod := "ctrl+alt"
+			if val, ok := hotkeyModLabelToValue[settingsClipboardModifier.Selected]; ok {
+				clipboardMod = val
+			}
+			clipboardKey := strings.ToUpper(strings.TrimSpace(settingsClipboardKey.Text))
+			if clipboardKey == "" {
+				clipboardKey = "V"
+			}
+
+			// Get text hotkey values
+			textMod := "ctrl+alt"
+			if val, ok := hotkeyModLabelToValue[settingsTextModifier.Selected]; ok {
+				textMod = val
+			}
+			textKey := strings.ToUpper(strings.TrimSpace(settingsTextKey.Text))
+			if textKey == "" {
+				textKey = "T"
+			}
+
 			// Build new config from form
 			newCfg := config.Config{
 				DefaultSpeedOption: config.SpeedOption(settingsCurrentSpeedOption),
@@ -1931,6 +2289,16 @@ func main() {
 				AbortOnFocusChange: settingsAbortFocusCheck.Checked,
 				Language:           settingsLanguageLabelToCode[settingsLanguageSelect.Selected],
 				AlwaysOnTop:        settingsAlwaysOnTopCheck.Checked,
+				HotkeyClipboard: config.HotkeyConfig{
+					Enabled:  settingsClipboardHotkeyEnabled.Checked,
+					Modifier: clipboardMod,
+					Key:      clipboardKey,
+				},
+				HotkeyText: config.HotkeyConfig{
+					Enabled:  settingsTextHotkeyEnabled.Checked,
+					Modifier: textMod,
+					Key:      textKey,
+				},
 			}
 
 			// Parse custom speed if custom is selected
@@ -1980,6 +2348,9 @@ func main() {
 			// Apply always on top setting
 			alwaysOnTopCheck.SetChecked(newCfg.AlwaysOnTop)
 			applyAlwaysOnTop(newCfg.AlwaysOnTop)
+
+			// Apply hotkey settings
+			applyHotkeySettings(newCfg.HotkeyClipboard, newCfg.HotkeyText)
 
 			// Apply language change
 			selectedLanguageCode = newCfg.Language
@@ -2040,6 +2411,9 @@ func main() {
 						alwaysOnTopCheck.SetChecked(cfg.AlwaysOnTop)
 						applyAlwaysOnTop(cfg.AlwaysOnTop)
 
+						// Reset hotkeys
+						applyHotkeySettings(cfg.HotkeyClipboard, cfg.HotkeyText)
+
 						selectedLanguageCode = cfg.Language
 						applyLanguageSelection()
 
@@ -2052,8 +2426,9 @@ func main() {
 		})
 		resetBtn.Importance = widget.WarningImportance
 
-		// Create settings form
-		settingsContent := container.NewVBox(
+		// Create settings form with two-column layout
+		// Left column
+		leftColumn := container.NewVBox(
 			widget.NewLabelWithStyle(labels.SettingsDefaultSpeedHeading, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 			settingsSpeedSelect,
 			settingsCustomMsEntry,
@@ -2065,16 +2440,43 @@ func main() {
 
 			widget.NewLabelWithStyle(labels.SettingsCompatibilityLabel, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 			settingsCompatSelect,
-			widget.NewSeparator(),
+		)
 
-			settingsAbortFocusCheck,
-			settingsAlwaysOnTopCheck,
+		// Right column
+		rightColumn := container.NewVBox(
+			widget.NewLabelWithStyle(labels.SettingsHotkeysHeading, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			container.NewHBox(
+				settingsClipboardHotkeyEnabled,
+				settingsClipboardModifier,
+				widget.NewLabel("+"),
+				settingsClipboardKey,
+			),
+			container.NewHBox(
+				settingsTextHotkeyEnabled,
+				settingsTextModifier,
+				widget.NewLabel("+"),
+				settingsTextKey,
+			),
 			widget.NewSeparator(),
 
 			widget.NewLabelWithStyle(labels.SettingsLanguageLabel, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 			settingsLanguageSelect,
 			widget.NewSeparator(),
 
+			settingsAbortFocusCheck,
+			settingsAlwaysOnTopCheck,
+		)
+
+		// Two-column layout
+		columnsContainer := container.NewHBox(
+			leftColumn,
+			widget.NewSeparator(),
+			rightColumn,
+		)
+
+		settingsContent := container.NewVBox(
+			columnsContainer,
+			widget.NewSeparator(),
 			container.NewHBox(saveBtn, cancelBtn, resetBtn),
 			settingsStatusLabel,
 		)
@@ -2087,12 +2489,10 @@ func main() {
 	settingsBtn = widget.NewButtonWithIcon("", theme.SettingsIcon(), showSettingsDialog)
 	settingsBtn.Importance = widget.LowImportance
 
-	// bottom right: language selector + version + settings button
+	// bottom right: settings button + version
 	bottom_right := container.NewVBox(
 		abortFocusCheck,
 		alwaysOnTopCheck,
-		languageHeadingLabel,
-		languageSelect,
 		settingsBtn,
 		versionLabel,
 	)
@@ -2116,7 +2516,6 @@ func main() {
 		typingSpeedLabel.SetText(labels.TypingSpeedHeading)
 		compatibilityModeLabel.SetText(labels.CompatibilityModeHeading)
 		textToTypeLabel.SetText(labels.TextToTypeHeading)
-		languageHeadingLabel.SetText(labels.LanguageHeading)
 		clearBtn.SetText(labels.ClearButton)
 		refreshBtn.SetText(labels.RefreshWindowsButton)
 		typeBtn.SetText(labels.TypeButton)
@@ -2157,6 +2556,12 @@ func main() {
 	if cfg.AlwaysOnTop {
 		applyAlwaysOnTop(true)
 	}
+
+	// Apply initial hotkey settings
+	applyHotkeySettings(cfg.HotkeyClipboard, cfg.HotkeyText)
+
+	// Ensure hotkey cleanup on exit
+	defer stopHotkeyListener()
 
 	w.ShowAndRun()
 }

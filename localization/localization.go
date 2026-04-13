@@ -76,6 +76,17 @@ type LabelSet struct {
 	SettingsResetConfirmMessage string
 	SettingsAlwaysOnTopLabel    string
 
+	// Hotkey settings
+	SettingsHotkeysHeading       string
+	SettingsHotkeyClipboardLabel string
+	SettingsHotkeyTextLabel      string
+	SettingsHotkeyModifier       string
+	SettingsHotkeyKey            string
+	HotkeyModCtrlAlt             string
+	HotkeyModCtrlShift           string
+	HotkeyModAltShift            string
+	HotkeyModCtrlAltShift        string
+
 	// Always on top
 	AlwaysOnTop string
 }
@@ -165,6 +176,17 @@ var (
 				SettingsResetConfirmMessage: "Are you sure you want to reset all settings to their default values?",
 				SettingsAlwaysOnTopLabel:    "Always on top by default",
 
+				// Hotkey settings
+				SettingsHotkeysHeading:       "Global Hotkeys",
+				SettingsHotkeyClipboardLabel: "Type Clipboard",
+				SettingsHotkeyTextLabel:      "Type Text",
+				SettingsHotkeyModifier:       "Modifier",
+				SettingsHotkeyKey:            "Key",
+				HotkeyModCtrlAlt:             "Ctrl + Alt",
+				HotkeyModCtrlShift:           "Ctrl + Shift",
+				HotkeyModAltShift:            "Alt + Shift",
+				HotkeyModCtrlAltShift:        "Ctrl + Alt + Shift",
+
 				// Always on top
 				AlwaysOnTop: "Always on top",
 			},
@@ -240,6 +262,17 @@ var (
 				SettingsResetConfirmTitle:   "Einstellungen zurücksetzen",
 				SettingsResetConfirmMessage: "Möchten Sie wirklich alle Einstellungen auf die Standardwerte zurücksetzen?",
 				SettingsAlwaysOnTopLabel:    "Standardmäßig immer im Vordergrund",
+
+				// Hotkey settings
+				SettingsHotkeysHeading:       "Globale Hotkeys",
+				SettingsHotkeyClipboardLabel: "Zwischenablage tippen",
+				SettingsHotkeyTextLabel:      "Text tippen",
+				SettingsHotkeyModifier:       "Modifikator",
+				SettingsHotkeyKey:            "Taste",
+				HotkeyModCtrlAlt:             "Strg + Alt",
+				HotkeyModCtrlShift:           "Strg + Umschalt",
+				HotkeyModAltShift:            "Alt + Umschalt",
+				HotkeyModCtrlAltShift:        "Strg + Alt + Umschalt",
 
 				// Always on top
 				AlwaysOnTop: "Immer im Vordergrund",
