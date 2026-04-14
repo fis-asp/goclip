@@ -254,6 +254,7 @@ var (
 	procGetForegroundWindow      = user32.NewProc("GetForegroundWindow")
 	procSetWindowPos             = user32.NewProc("SetWindowPos")
 	procFindWindowW              = user32.NewProc("FindWindowW")
+	procGetClassNameW            = user32.NewProc("GetClassNameW")
 
 	procQueryFullProcessImageNameW = kernel32.NewProc("QueryFullProcessImageNameW")
 )
@@ -291,9 +292,31 @@ var ignoredProcessNamesLower = map[string]struct{}{
 }
 
 var ignoredTitleSubstringsLower = []string{
-	"task switch",     // covers “Task Switch”, “Task Switching”
-	"program manager", // desktop shell surface
-	// add more substrings if needed
+	"task switch",                // EN: "Task Switching"
+	"task view",                  // EN: "Task View" (Win+Tab)
+	"program manager",            // desktop shell surface
+	"aufgabenansicht",            // DE: Task View
+	"aufgabenumschaltung",        // DE: Task Switching
+	"vue des tâches",             // FR: Task View
+	"changement de tâches",       // FR: Task Switching
+	"vista de tareas",            // ES: Task View
+	"visualizzazione attività",   // IT: Task View
+	"taakweergave",               // NL: Task View
+	"visão de tarefas",           // PT: Task View
+	"vista de tarefas",           // PT-BR: Task View
+	"aktivitetsvy",               // SV: Task View
+	"tehtävänäkymä",              // FI: Task View
+	"oppgavevisning",             // NO: Task View
+}
+
+// ignoredClassNamesLower contains window class names (language-independent)
+// that should always be ignored. This is the most reliable way to filter
+// system UI like the Alt+Tab switcher across all Windows languages.
+var ignoredClassNamesLower = map[string]struct{}{
+	"taskswitcherwnd":            {}, // Classic Alt+Tab
+	"taskswitcheroverlaywnd":     {}, // Alt+Tab overlay
+	"multitaskingviewframe":      {}, // Win10/11 modern Alt+Tab & Task View
+	"windows.ui.core.corewindow": {}, // UWP system windows (Start menu, Task View)
 }
 
 type appCompatibilityRule struct {
@@ -804,10 +827,26 @@ func getWindowProcessExeBase(hwnd windows.Handle) string {
 	return exe
 }
 
+// getWindowClassName retrieves the window class name (language-independent).
+func getWindowClassName(hwnd windows.Handle) string {
+	var buf [256]uint16
+	n, _, _ := procGetClassNameW.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+	if n == 0 {
+		return ""
+	}
+	return strings.ToLower(windows.UTF16ToString(buf[:n]))
+}
+
 func shouldIgnoreWindow(hwnd windows.Handle, title string, selfExeLower string) bool {
 	t := strings.ToLower(strings.TrimSpace(title))
 	if t == "" {
 		return true
+	}
+	// Check window class name first (language-independent, most reliable)
+	if cls := getWindowClassName(hwnd); cls != "" {
+		if _, ok := ignoredClassNamesLower[cls]; ok {
+			return true
+		}
 	}
 	for _, sub := range ignoredTitleSubstringsLower {
 		if strings.Contains(t, sub) {
