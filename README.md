@@ -18,16 +18,16 @@
 
 # goclip
 
-A cross-platform tool (Windows & macOS) that types text into **any** focused window (even web/VNC/VM consoles) using **real keyboard events**.  
+A cross-platform tool (Windows & macOS) that types text into any focused window (even web/VNC/VM consoles) using real keyboard events.  
 Built with [Fyne](https://fyne.io/) for a clean dark-mode GUI.
 
-<img width="820" height="460" alt="image" src="https://github.com/user-attachments/assets/e4328ba2-962e-475d-b0ee-1f7154532147" />
+<img width="800" height="460" alt="image" src="https://github.com/user-attachments/assets/d71dd2de-addf-4e4e-b22c-73b8c244f3a7" />
 
 ---
 
 ## Why?
 
-Some apps and browser-embedded consoles (e.g. VMware/KVM) ignore Unicode paste or `WM_CHAR` messages. **goclip** simulates **physical key presses** using OS-native APIs, so those consoles receive input exactly like a real keyboard would.
+Some apps and browser-embedded consoles (e.g. VMware/KVM) ignore Unicode paste or `WM_CHAR` messages. goclip simulates physical key presses using OS-native APIs, so those consoles receive input exactly like a real keyboard would.
 
 - **Windows**: Uses scan codes via `SendInput` with `VkKeyScanExW`/`MapVirtualKeyExW`
 - **macOS**: Uses Core Graphics events (`CGEvent`) for keyboard simulation
